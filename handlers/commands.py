@@ -5,6 +5,11 @@ from utils.news_fetcher import get_news
 import config
 from utils import logger, news_fetcher
 from database import db
+from database.db import Database
+import logging
+from utils.logger import logger
+
+command_logger = logger.getChild('commands')
 
 # Funzione di benvenuto
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -372,6 +377,43 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Errore broadcast a {user['user_id']}: {e}")
 
     await update.message.reply_text(f"Messaggio inviato a {len(users)} utenti")
+
+
+async def subscribe_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Iscrive il gruppo alle notizie automatiche"""
+    try:
+        chat_id = update.effective_chat.id
+        command_logger.info(f"Ricevuto comando subscribe_group da {chat_id}")
+
+        if update.effective_chat.type == 'private':
+            await update.message.reply_text("⚠️ Questo comando funziona solo nei gruppi!")
+            return
+
+        db = Database()
+        categories = ['generale', 'tech', 'ps5', 'xbox', 'switch', 'pc']
+        success = []
+
+        for category in categories:
+            try:
+                if db.add_subscriber(chat_id=chat_id, category=category, frequency='normal'):
+                    success.append(category)
+            except Exception as e:
+                command_logger.error(f"Errore iscrizione categoria {category}: {e}", exc_info=True)
+
+        if success:
+            response = (f"✅ Gruppo iscritto correttamente alle categorie:\n"
+                        f"{', '.join(success)}\n\n"
+                        f"Ora riceverai gli aggiornamenti automatici!")
+            command_logger.info(f"Gruppo {chat_id} iscritto a {len(success)} categorie")
+        else:
+            response = "❌ Errore durante l'iscrizione del gruppo."
+            command_logger.error("Fallita iscrizione gruppo")
+
+        await update.message.reply_text(response)
+
+    except Exception as e:
+        command_logger.critical(f"Errore grave in subscribe_group: {str(e)}", exc_info=True)
+        await update.message.reply_text("❌ Si è verificato un errore interno.")
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mostra i comandi disponibili"""

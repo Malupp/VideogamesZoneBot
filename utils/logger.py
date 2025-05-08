@@ -1,27 +1,29 @@
-# utils/logger.py
 import logging
-from logging.handlers import RotatingFileHandler
+import sys
 
+def setup_logger(name=__name__):
+    """Configura un logger con output su console e file"""
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
 
-def setup_logger():
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-
-    # Formattatore
+    # Formattatore comune
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
-    # Handler per file (rotazione)
-    file_handler = RotatingFileHandler(
-        'bot.log', maxBytes=5 * 1024 * 1024, backupCount=3
-    )
+    # Handler per console
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+
+    # Handler per file
+    file_handler = logging.FileHandler('bot.log')
     file_handler.setFormatter(formatter)
+
+    # Aggiungi gli handler
+    logger.addHandler(console_handler)
     logger.addHandler(file_handler)
 
-    # Handler per console
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
     return logger
+
+# Logger globale
+logger = setup_logger('bot_main')

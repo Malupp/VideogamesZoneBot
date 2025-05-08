@@ -1,73 +1,105 @@
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
-from config import TOKEN
+from config import TOKEN, Config
 from handlers import commands, auto_send
 import asyncio
 import logging
 from utils.news_fetcher import news_fetcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=getattr(logging, Config.LOG_LEVEL)
 )
 logger = logging.getLogger(__name__)
 
 
 class TelegramBot:
     def __init__(self):
+        self.logger = logger.getChild('telegram_bot')
         self.application = None
         self.scheduler = None
         self._shutdown_event = asyncio.Event()
+        self._background_task = None
 
     async def run(self):
         """Main entry point for the bot"""
-        print("[DEBUG] Starting bot initialization")
-
+        logger.info("Starting bot initialization")
+        self.logger.info("Starting bot initialization")
         try:
-            # Initialize components
-            self.application = ApplicationBuilder().token(TOKEN).build()
-            self.scheduler = AsyncIOScheduler()
+            # Initialize application
+            self.application = (
+                ApplicationBuilder()
+                .token(TOKEN)
+                .post_init(self._on_application_ready)
+                .build()
+            )
 
-            # Setup components
+            # Initialize scheduler with explicit options
+            self.scheduler = AsyncIOScheduler(
+                timezone="UTC",
+                job_defaults={
+                    'misfire_grace_time': 60,
+                    'coalesce': True,
+                    'max_instances': 1
+                }
+            )
+
+            # Register handlers
             self._register_handlers()
-            auto_send.setup_periodic_jobs(self.application, self.scheduler)
 
-            # Start scheduler before polling
-            self.scheduler.start()
-            print("[INFO] Scheduler started")
+            # Initialize news fetcher
+            await news_fetcher.initialize()
 
-            # Start background tasks
-            asyncio.create_task(self._background_tasks())
-
-            print("[INFO] Bot is running")
+            # Start the bot
+            logger.info("Starting bot polling")
             await self.application.initialize()
             await self.application.start()
             await self.application.updater.start_polling()
+
+            # Start background tasks
+            self._background_task = asyncio.create_task(self._background_tasks())
 
             # Wait for shutdown signal
             await self._shutdown_event.wait()
 
         except asyncio.CancelledError:
-            print("[INFO] Received shutdown signal")
+            logger.info("Received shutdown signal")
         except Exception as e:
-            logger.error(f"Bot runtime error: {e}", exc_info=True)
-            print(f"[CRITICAL] Bot crashed: {e}")
+            logger.critical(f"Bot runtime error: {e}", exc_info=True)
+            raise
         finally:
             await self._shutdown()
+
+    async def _on_application_ready(self, app):
+        """Callback when application is ready"""
+        logger.info("Application ready, setting up periodic jobs")
+        try:
+            auto_send.setup_periodic_jobs(self.application, self.scheduler)
+            self.scheduler.start()
+            logger.info("Scheduler started with jobs: %s", self.scheduler.get_jobs())
+        except Exception as e:
+            logger.error(f"Failed to start scheduler: {e}")
+            raise
 
     async def _background_tasks(self):
         """Handle background tasks"""
         try:
-            # Initialize and refresh feeds
-            await news_fetcher.initialize()
-
             # Keep the task running until shutdown
             while not self._shutdown_event.is_set():
-                await asyncio.sleep(1)
+                try:
+                    # Refresh feeds periodically
+                    await news_fetcher.refresh_feeds()
+                    await asyncio.sleep(Config.NEWS_UPDATE_INTERVAL * 60)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error(f"Background task error: {e}")
+                    await asyncio.sleep(60)  # Wait before retrying
 
         except Exception as e:
-            logger.error(f"Background task error: {e}")
+            logger.error(f"Background task fatal error: {e}")
             self._shutdown_event.set()
 
     def _register_handlers(self):
@@ -91,42 +123,67 @@ class TelegramBot:
             CommandHandler('ia', commands.ai),
             CommandHandler('cerca', commands.search),
             CommandHandler('search', commands.search),
+            CommandHandler('subscribegroup', commands.subscribe_group),
             CallbackQueryHandler(commands.handle_preferences, pattern='^pref_'),
-            CallbackQueryHandler(commands.handle_frequency, pattern='^freq_')
+            CallbackQueryHandler(commands.handle_frequency, pattern='^freq_'),
+            CommandHandler('test_auto_send', self._test_auto_send)  # New test command
         ]
 
         for handler in handlers:
             self.application.add_handler(handler)
 
+    async def _test_auto_send(self, update, context):
+        """Test command for auto-send functionality"""
+        try:
+            await update.message.reply_text("Starting auto-send test...")
+            result = await auto_send.send_news_to_subscribers(
+                context.bot,
+                'generale',
+                force_update=True
+            )
+            await update.message.reply_text(f"Auto-send test completed. Sent to {result} users.")
+        except Exception as e:
+            logger.error(f"Auto-send test failed: {e}")
+            await update.message.reply_text(f"Error during test: {e}")
+
     async def _shutdown(self):
         """Cleanup tasks and shutdown the bot"""
-        print("[DEBUG] Starting shutdown sequence")
+        logger.info("Starting shutdown sequence")
 
         try:
             # Signal background tasks to stop
             self._shutdown_event.set()
 
+            # Cancel background task
+            if self._background_task:
+                self._background_task.cancel()
+                try:
+                    await self._background_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.error(f"Error waiting for background task: {e}")
+
             # Shutdown scheduler if running
             if self.scheduler and self.scheduler.running:
-                print("[DEBUG] Stopping scheduler")
+                logger.info("Stopping scheduler")
                 self.scheduler.shutdown(wait=False)
 
             # Close news fetcher
-            print("[DEBUG] Closing news fetcher")
+            logger.info("Closing news fetcher")
             await news_fetcher.close()
 
             # Shutdown application if running
             if self.application and self.application.running:
-                print("[DEBUG] Shutting down application")
+                logger.info("Shutting down application")
                 await self.application.updater.stop()
                 await self.application.stop()
                 await self.application.shutdown()
 
         except Exception as e:
             logger.error(f"Shutdown error: {e}")
-            print(f"[ERROR] Shutdown failed: {e}")
         finally:
-            print("[INFO] Shutdown completed")
+            logger.info("Shutdown completed")
 
 
 async def main():
@@ -144,9 +201,13 @@ if __name__ == '__main__':
         # Run the bot
         loop.run_until_complete(main())
     except KeyboardInterrupt:
-        print("\n[INFO] Received keyboard interrupt, shutting down...")
+        logger.info("Received keyboard interrupt, shutting down...")
     except Exception as e:
-        logger.error(f"Critical error: {e}", exc_info=True)
+        logger.critical(f"Critical error: {e}", exc_info=True)
     finally:
         # Ensure all async resources are closed
+        tasks = asyncio.all_tasks(loop)
+        for task in tasks:
+            task.cancel()
+        loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
         loop.close()

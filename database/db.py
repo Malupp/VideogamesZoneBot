@@ -10,6 +10,7 @@ logger = setup_logger()
 
 class Database:
     def __init__(self, db_path: str = 'database/bot.db'):
+        self.logger = logger.getChild('database')  # Crea un sub-logger
         """Inizializza il database e crea le tabelle necessarie"""
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db_path = db_path
@@ -345,3 +346,44 @@ class Database:
                 'total_news_sent': 0,
                 'last_update': datetime.now().isoformat()
             }
+
+    def add_subscriber(self, chat_id: int, category: str, frequency: str = 'normal') -> bool:
+        """Aggiunge un iscritto al database (funziona per utenti e gruppi)"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Verifica se esiste già come utente, altrimenti crea un record base
+                cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (chat_id,))
+                if not cursor.fetchone():
+                    cursor.execute(
+                        "INSERT INTO users (user_id, joined_date, last_activity, preferences) "
+                        "VALUES (?, ?, ?, ?)",
+                        (chat_id, datetime.now().isoformat(), datetime.now().isoformat(),
+                         json.dumps({'frequency': frequency}))
+                    )
+
+                    # Aggiungi alle statistiche
+                    cursor.execute(
+                        "INSERT INTO user_stats (user_id) VALUES (?)",
+                        (chat_id,)
+                    )
+
+                # Iscrivi alla categoria
+                cursor.execute(
+                    "INSERT OR REPLACE INTO subscriptions (user_id, category, subscribed_date) "
+                    "VALUES (?, ?, ?)",
+                    (chat_id, category, datetime.now().isoformat())
+                )
+
+                # Aggiorna le preferenze
+                prefs = self.get_user_preferences(chat_id)
+                prefs.update({'frequency': frequency})
+                self.update_user_preferences(chat_id, prefs)
+
+                conn.commit()
+                return True
+
+        except Exception as e:
+            logger.error(f"Error in add_subscriber for {chat_id}: {e}")
+            return False
