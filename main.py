@@ -51,7 +51,7 @@ class TelegramBot:
                 .build()
             )
 
-            # 2. Poi configura lo scheduler
+            # 2. Configura lo scheduler con event loop corrente
             self.scheduler = AsyncIOScheduler(
                 timezone="UTC",
                 job_defaults={
@@ -60,8 +60,9 @@ class TelegramBot:
                     'max_instances': 1
                 }
             )
+            self.scheduler.configure(event_loop=asyncio.get_event_loop())
 
-            # 3. Ora puoi assegnare lo scheduler all'applicazione
+            # 3. Assegna lo scheduler all'applicazione
             self.application.scheduler = self.scheduler
 
             # Registra gli handler
@@ -80,6 +81,9 @@ class TelegramBot:
             if not self.scheduler.running:
                 self.scheduler.start()
                 self.logger.info(f"🚀 Scheduler avviato con {len(self.scheduler.get_jobs())} job attivi")
+                # Log dei job configurati
+                for job in self.scheduler.get_jobs():
+                    self.logger.info(f"Job {job.id} - Prossima esecuzione: {job.next_run_time}")
 
             self.initialization_complete = True
             self.logger.info("Inizializzazione bot completata")

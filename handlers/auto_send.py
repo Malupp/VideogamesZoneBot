@@ -127,27 +127,27 @@ def setup_periodic_jobs(application, scheduler):
     # Prima rimuovi eventuali job esistenti
     scheduler.remove_all_jobs()
 
-    # Definisci gli intervalli per ogni categoria (ridotti per test)
+    # Definisci gli intervalli per ogni categoria (in minuti)
     intervals = {
-        'generale': {'interval': 400, 'first_run': True},   # Imposta first_run a True per esecuzione immediata
-        'tech': {'interval': 900, 'first_run': True},       # Imposta tutti a True per testing
-        'ps5': {'interval': 1300, 'first_run': True},
-        'xbox': {'interval': 1500, 'first_run': True},
-        'switch': {'interval': 1900, 'first_run': True},
-        'pc': {'interval': 2300, 'first_run': True},
+        'generale': {'minutes': 15, 'first_run': True},
+        'tech': {'minutes': 30, 'first_run': True},
+        'ps5': {'minutes': 45, 'first_run': True},
+        'xbox': {'minutes': 45, 'first_run': True},
+        'switch': {'minutes': 45, 'first_run': True},
+        'pc': {'minutes': 45, 'first_run': True},
     }
 
     # Aggiungi i job con offset per evitare sovraccarichi
     offset = 0
     for category, config in intervals.items():
-        # Forza l'esecuzione iniziale per tutti i job per il testing
+        # Forza l'esecuzione iniziale per tutti i job
         next_run = datetime.now() + timedelta(seconds=offset) if config['first_run'] else None
 
         scheduler.add_job(
             send_news_to_subscribers,
             'interval',
-            seconds=config['interval'],
-            args=[application.bot, category, False],  # Aggiungi force_update=False come parametro esplicito
+            minutes=config['minutes'],
+            args=[application.bot, category, False],
             id=f'autosend_{category}',
             next_run_time=next_run,
             replace_existing=True,
@@ -155,35 +155,39 @@ def setup_periodic_jobs(application, scheduler):
         )
 
         # Aggiungi un offset per distribuire i job
-        offset += 60  # Ridotto a 1 minuto per testing
+        offset += 30  # 30 secondi di offset tra i job
 
     # Aggiungi job di pulizia utenti inattivi (una volta al giorno)
     scheduler.add_job(
         cleanup_inactive_users,
         'interval',
-        days=1,
+        hours=24,
         args=[application.bot],
         id='cleanup_inactive',
         replace_existing=True
     )
 
-    # Aggiungi job di reset cache (ogni 12 ore)
+    # Aggiungi job di reset cache (ogni 6 ore)
     scheduler.add_job(
         reset_cache,
         'interval',
-        hours=12,
+        hours=6,
         id='reset_cache',
         replace_existing=True
     )
 
-    # Configurazione più robusta
-    scheduler.configure({
-        'apscheduler.job_defaults.coalesce': True,
-        'apscheduler.job_defaults.max_instances': 1,
-        'apscheduler.timezone': 'UTC'
-    })
+    scheduler.configure(
+        {
+            'apscheduler.job_defaults.coalesce': True,
+            'apscheduler.job_defaults.max_instances': 1,
+            'apscheduler.timezone': 'UTC'
+        }
+    )
 
-    logger.info(f"✅ Job attivi: {[j.id for j in scheduler.get_jobs()]}")
+    logger.info(f"✅ Job configurati: {[j.id for j in scheduler.get_jobs()]}")
+    # Log dei prossimi orari di esecuzione
+    for job in scheduler.get_jobs():
+        logger.info(f"Job {job.id} - Prossima esecuzione: {job.next_run_time}")
 
 
 async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):

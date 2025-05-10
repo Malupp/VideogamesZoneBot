@@ -632,9 +632,19 @@ async def debug_scheduler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("⚠️ Scheduler non inizializzato")
             return
 
-        # Verifica che l'utente sia admin
-        if update.effective_user.id not in c.Config.ADMIN_IDS:
-            await update.message.reply_text("❌ Accesso negato")
+        # Verifica permessi (admin bot o admin gruppo)
+        is_bot_admin = update.effective_user.id in c.Config.ADMIN_IDS
+        is_group_admin = False
+        
+        if update.effective_chat.type in ['group', 'supergroup']:
+            member = await context.bot.get_chat_member(
+                update.effective_chat.id,
+                update.effective_user.id
+            )
+            is_group_admin = member.status in ['creator', 'administrator']
+        
+        if not (is_bot_admin or is_group_admin):
+            await update.message.reply_text("❌ Questo comando è riservato agli amministratori")
             return
 
         # Accedi allo scheduler direttamente dall'applicazione bot
