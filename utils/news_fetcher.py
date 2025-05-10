@@ -16,8 +16,10 @@ class NewsFetcher:
         self.RSS_FEEDS = {
             'generale': [
                 'https://it.ign.com/feed.xml',
-                'https://www.everyeye.it/feed/notizie.xml',
+                'https://www.everyeye.it/rss/news.xml',
                 'https://www.gamesource.it/feed-rss-videogiochi/',
+                'https://www.gametimers.it/feed/',
+                'https://www.spaziogames.it/rss'  
                 'https://multiplayer.it/feed/'
             ],
             'ps5': [

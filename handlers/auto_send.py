@@ -22,6 +22,13 @@ last_sent_news: Dict[str, List[Tuple[str, str, str]]] = {}
 async def send_news_to_subscribers(bot, category: str, force_update: bool = False) -> int:
     """Versione migliorata e più robusta per l'invio di notizie"""
     try:
+        if not hasattr(bot, 'get_me'):
+            logger.error("Bot instance non valida")
+            return 0
+
+        subscribers = db.get_subscribers(category)
+        logger.info(f"Trovati {len(subscribers)} iscritti per {category}")  # Log aggiuntivo
+
         logger.info(f"Inizio invio notizie per {category}")
 
         # Ottieni gli iscritti

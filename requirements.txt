@@ -2,7 +2,7 @@ python-telegram-bot==20.7
 aiohttp==3.9.5
 APScheduler==3.10.4
 python-dotenv==1.0.1
-feedparser
+feedparser==6.0.10
 httpx~=0.25.2
 fastapi
 uvicorn
