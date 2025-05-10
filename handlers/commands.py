@@ -2,7 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
 from utils.helpers import format_news
 from utils.news_fetcher import news_fetcher
-import config
+import config as c
 from utils.logger import logger
 from database.db import Database
 from datetime import datetime, timedelta
@@ -589,7 +589,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mostra le statistiche del bot (solo admin)"""
     try:
         user_id = update.effective_user.id
-        if user_id not in config.ADMIN_IDS:
+        if user_id not in c.Config.ADMIN_IDS:
             await update.message.reply_text("❌ Accesso negato")
             return
 
@@ -633,7 +633,7 @@ async def debug_scheduler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # Verifica che l'utente sia admin
-        if update.effective_user.id not in config.ADMIN_IDS:
+        if update.effective_user.id not in c.Config.ADMIN_IDS:
             await update.message.reply_text("❌ Accesso negato")
             return
 
@@ -673,7 +673,7 @@ async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Test invio notizie (solo admin)"""
     try:
         user_id = update.effective_user.id
-        if user_id not in config.ADMIN_IDS:
+        if user_id not in c.Config.ADMIN_IDS:
             await update.message.reply_text("❌ Accesso negato")
             return
 
@@ -696,3 +696,43 @@ async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in test_send: {e}")
         await update.message.reply_text("❌ Errore durante il test. Controlla i log.")
+
+
+async def debug_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando per debuggare il database degli iscritti"""
+    try:
+        # Verifica permessi admin
+        if update.effective_user.id not in c.Config.ADMIN_IDS:
+            await update.message.reply_text("Comando riservato agli amministratori")
+            return
+
+        # Controlla il database
+        await update.message.reply_text("🔍 Analisi database in corso...")
+
+        # Ottieni statistiche
+        user_count = db.get_user_count()
+        subscriber_stats = {}
+        for category in ['generale', 'tech', 'ps5', 'xbox', 'pc', 'switch', 'ia', 'cripto']:
+            subscribers = db.get_subscribers(category)
+            subscriber_stats[category] = len(subscribers)
+
+        stats_text = "📊 *Statistiche Database*\n\n"
+        stats_text += f"Utenti totali: {user_count}\n\n"
+        stats_text += "*Iscritti per categoria:*\n"
+        for cat, count in subscriber_stats.items():
+            stats_text += f"- {cat.capitalize()}: {count}\n"
+
+        await update.message.reply_text(stats_text, parse_mode="Markdown")
+
+        # Se non ci sono iscritti alla categoria generale, aggiungi chi invia il comando
+        if subscriber_stats['generale'] == 0:
+            user_id = update.effective_user.id
+            db.subscribe(user_id, 'generale')
+            await update.message.reply_text(
+                "✅ *Database riparato*\nTi ho aggiunto come utente test per la categoria 'generale'.",
+                parse_mode="Markdown"
+            )
+
+    except Exception as e:
+        logger.error(f"Errore in debug_database: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Errore: {str(e)}")

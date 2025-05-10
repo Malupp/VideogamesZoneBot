@@ -22,20 +22,29 @@ last_sent_news: Dict[str, List[Tuple[str, str, str]]] = {}
 async def send_news_to_subscribers(bot, category: str, force_update: bool = False) -> int:
     """Versione migliorata e più robusta per l'invio di notizie"""
     try:
+        logger.info(f"==== INIZIA SEND_NEWS_TO_SUBSCRIBERS PER {category} ====")
+        logger.info(f"Force update: {force_update}")
+
         if not hasattr(bot, 'get_me'):
             logger.error("Bot instance non valida")
             return 0
 
-        subscribers = db.get_subscribers(category)
-        logger.info(f"Trovati {len(subscribers)} iscritti per {category}")  # Log aggiuntivo
-
-        logger.info(f"Inizio invio notizie per {category}")
-
-        # Ottieni gli iscritti
-        subscribers = db.get_subscribers(category)
-        if not subscribers:
-            logger.info(f"Nessun iscritto per {category}")
+        # Verifica bot
+        try:
+            bot_info = await bot.get_me()
+            logger.info(f"Bot valido: {bot_info.username}")
+        except Exception as e:
+            logger.error(f"Errore verifica bot: {e}")
             return 0
+
+        # Ottenimento dei subscribers
+        subscribers = db.get_subscribers(category)
+        logger.info(f"Trovati {len(subscribers)} iscritti per {category}")
+        if not subscribers:
+            logger.info(f"Nessun iscritto per {category}, skip invio")
+            return 0
+
+        logger.info(f"Subscriber IDs: {subscribers[:5]}{'... e altri' if len(subscribers) > 5 else ''}")
 
         # Recupera le notizie
         try:
@@ -112,32 +121,33 @@ async def send_news_to_subscribers(bot, category: str, force_update: bool = Fals
 
 
 def setup_periodic_jobs(application, scheduler):
-    """Configura i job con intervalli più appropriati"""
+    """Configura i job con intervalli più appropriati e garantisce l'esecuzione"""
     logger.info("🔄 Configurazione job periodici")
 
     # Prima rimuovi eventuali job esistenti
     scheduler.remove_all_jobs()
 
-    # Definisci gli intervalli per ogni categoria
+    # Definisci gli intervalli per ogni categoria (ridotti per test)
     intervals = {
-        'generale': {'interval': 400, 'first_run': True},  # 1 ora
-        'tech': {'interval': 900, 'first_run': False},  # 2 ore
-        'ps5': {'interval': 1300, 'first_run': False},  # 2 ore
-        'xbox': {'interval': 1500, 'first_run': False},  # 2 ore
-        'switch': {'interval': 1900, 'first_run': False},  # 2 ore
-        'pc': {'interval': 2300, 'first_run': False},  # 2 ore
+        'generale': {'interval': 400, 'first_run': True},   # Imposta first_run a True per esecuzione immediata
+        'tech': {'interval': 900, 'first_run': True},       # Imposta tutti a True per testing
+        'ps5': {'interval': 1300, 'first_run': True},
+        'xbox': {'interval': 1500, 'first_run': True},
+        'switch': {'interval': 1900, 'first_run': True},
+        'pc': {'interval': 2300, 'first_run': True},
     }
 
     # Aggiungi i job con offset per evitare sovraccarichi
     offset = 0
     for category, config in intervals.items():
+        # Forza l'esecuzione iniziale per tutti i job per il testing
         next_run = datetime.now() + timedelta(seconds=offset) if config['first_run'] else None
 
         scheduler.add_job(
             send_news_to_subscribers,
             'interval',
             seconds=config['interval'],
-            args=[application.bot, category],
+            args=[application.bot, category, False],  # Aggiungi force_update=False come parametro esplicito
             id=f'autosend_{category}',
             next_run_time=next_run,
             replace_existing=True,
@@ -145,7 +155,7 @@ def setup_periodic_jobs(application, scheduler):
         )
 
         # Aggiungi un offset per distribuire i job
-        offset += 300  # 5 minuti di offset tra i job
+        offset += 60  # Ridotto a 1 minuto per testing
 
     # Aggiungi job di pulizia utenti inattivi (una volta al giorno)
     scheduler.add_job(

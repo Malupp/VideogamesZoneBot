@@ -118,6 +118,7 @@ class TelegramBot:
             CommandHandler('admin_stats', commands.admin_stats),
             CommandHandler('debug_scheduler', commands.debug_scheduler),
             CommandHandler('test_send', auto_send.test_send),
+            CommandHandler('debug_db', commands.debug_database),
             CallbackQueryHandler(commands.group_toggle_callback, pattern='^group_toggle:'),
             CallbackQueryHandler(commands.handle_preferences, pattern='^pref_'),
             CallbackQueryHandler(commands.handle_frequency, pattern='^freq_'),
