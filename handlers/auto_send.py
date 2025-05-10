@@ -124,70 +124,98 @@ def setup_periodic_jobs(application, scheduler):
     """Configura i job con intervalli più appropriati e garantisce l'esecuzione"""
     logger.info("🔄 Configurazione job periodici")
 
-    # Prima rimuovi eventuali job esistenti
-    scheduler.remove_all_jobs()
+    try:
+        # Prima rimuovi eventuali job esistenti
+        scheduler.remove_all_jobs()
 
-    # Definisci gli intervalli per ogni categoria (in minuti)
-    intervals = {
-        'generale': {'minutes': 15, 'first_run': True},
-        'tech': {'minutes': 30, 'first_run': True},
-        'ps5': {'minutes': 45, 'first_run': True},
-        'xbox': {'minutes': 45, 'first_run': True},
-        'switch': {'minutes': 45, 'first_run': True},
-        'pc': {'minutes': 45, 'first_run': True},
-    }
+        # Definisci gli intervalli per ogni categoria (in minuti)
+        intervals = {
+            'generale': {'minutes': 15, 'first_run': True},
+            'tech': {'minutes': 30, 'first_run': True},
+            'ps5': {'minutes': 45, 'first_run': True},
+            'xbox': {'minutes': 45, 'first_run': True},
+            'switch': {'minutes': 45, 'first_run': True},
+            'pc': {'minutes': 45, 'first_run': True},
+        }
 
-    # Aggiungi i job con offset per evitare sovraccarichi
-    offset = 0
-    for category, config in intervals.items():
-        # Forza l'esecuzione iniziale per tutti i job
-        next_run = datetime.now() + timedelta(seconds=offset) if config['first_run'] else None
+        # Aggiungi i job con offset per evitare sovraccarichi
+        offset = 0
+        for category, config in intervals.items():
+            try:
+                # Forza l'esecuzione iniziale per tutti i job
+                next_run = datetime.now() + timedelta(seconds=offset) if config['first_run'] else None
 
-        scheduler.add_job(
-            send_news_to_subscribers,
-            'interval',
-            minutes=config['minutes'],
-            args=[application.bot, category, False],
-            id=f'autosend_{category}',
-            next_run_time=next_run,
-            replace_existing=True,
-            misfire_grace_time=3600
+                job = scheduler.add_job(
+                    send_news_to_subscribers,
+                    'interval',
+                    minutes=config['minutes'],
+                    args=[application.bot, category, False],
+                    id=f'autosend_{category}',
+                    next_run_time=next_run,
+                    replace_existing=True,
+                    misfire_grace_time=3600
+                )
+                
+                # Log job configuration
+                logger.info(f"Job {job.id} configurato - Intervallo: {config['minutes']} minuti")
+
+                # Aggiungi un offset per distribuire i job
+                offset += 30  # 30 secondi di offset tra i job
+
+            except Exception as e:
+                logger.error(f"Errore configurazione job per {category}: {e}")
+
+        # Aggiungi job di pulizia utenti inattivi (una volta al giorno)
+        try:
+            cleanup_job = scheduler.add_job(
+                cleanup_inactive_users,
+                'interval',
+                hours=24,
+                args=[application.bot],
+                id='cleanup_inactive',
+                replace_existing=True
+            )
+            logger.info("Job pulizia utenti configurato")
+        except Exception as e:
+            logger.error(f"Errore configurazione job pulizia: {e}")
+
+        # Aggiungi job di reset cache (ogni 6 ore)
+        try:
+            cache_job = scheduler.add_job(
+                reset_cache,
+                'interval',
+                hours=6,
+                id='reset_cache',
+                replace_existing=True
+            )
+            logger.info("Job reset cache configurato")
+        except Exception as e:
+            logger.error(f"Errore configurazione job reset cache: {e}")
+
+        # Configurazione scheduler
+        scheduler.configure(
+            {
+                'apscheduler.job_defaults.coalesce': True,
+                'apscheduler.job_defaults.max_instances': 1,
+                'apscheduler.timezone': 'UTC'
+            }
         )
 
-        # Aggiungi un offset per distribuire i job
-        offset += 30  # 30 secondi di offset tra i job
+        # Log riepilogo job configurati
+        jobs = scheduler.get_jobs()
+        logger.info(f"✅ {len(jobs)} job configurati correttamente")
+        for job in jobs:
+            try:
+                if hasattr(job, 'next_run_time') and job.next_run_time:
+                    logger.info(f"Job {job.id} - Prossima esecuzione: {job.next_run_time}")
+                else:
+                    logger.info(f"Job {job.id} - Prossima esecuzione: non definita")
+            except Exception as e:
+                logger.error(f"Errore logging job {job.id}: {e}")
 
-    # Aggiungi job di pulizia utenti inattivi (una volta al giorno)
-    scheduler.add_job(
-        cleanup_inactive_users,
-        'interval',
-        hours=24,
-        args=[application.bot],
-        id='cleanup_inactive',
-        replace_existing=True
-    )
-
-    # Aggiungi job di reset cache (ogni 6 ore)
-    scheduler.add_job(
-        reset_cache,
-        'interval',
-        hours=6,
-        id='reset_cache',
-        replace_existing=True
-    )
-
-    scheduler.configure(
-        {
-            'apscheduler.job_defaults.coalesce': True,
-            'apscheduler.job_defaults.max_instances': 1,
-            'apscheduler.timezone': 'UTC'
-        }
-    )
-
-    logger.info(f"✅ Job configurati: {[j.id for j in scheduler.get_jobs()]}")
-    # Log dei prossimi orari di esecuzione
-    for job in scheduler.get_jobs():
-        logger.info(f"Job {job.id} - Prossima esecuzione: {job.next_run_time}")
+    except Exception as e:
+        logger.error(f"Errore grave in setup_periodic_jobs: {e}", exc_info=True)
+        raise
 
 
 async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
