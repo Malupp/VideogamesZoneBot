@@ -1,5 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
+from handlers.auto_send import send_digest
 from utils.helpers import format_news
 from utils.news_fetcher import news_fetcher
 import config as c
@@ -57,12 +58,20 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /ia - Notizie intelligenza artificiale
 /crypto - Notizie criptovalute
 
-📌 *Altri comandi*:
+🔥 *Comandi Speciali*:
+/releases - Ultime uscite e prossimi giochi
+/deals - Offerte e sconti giochi
+/top - Top notizie del giorno
+/filter - Filtra notizie per piattaforma
+/digest - Riepilogo giornaliero
 /news5 - Ultime 5 notizie
 /news10 - Ultime 10 notizie
-/getchatid - Ottieni l'ID della chat
+
+⚙️ *Comandi Gruppo*:
 /group_start - Registra questo gruppo
 /group_settings - Impostazioni gruppo
+/subscribegroup - Iscrive il gruppo a tutte le categorie
+/getchatid - Ottieni l'ID della chat
 """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -746,3 +755,122 @@ async def debug_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Errore in debug_database: {e}", exc_info=True)
         await update.message.reply_text(f"❌ Errore: {str(e)}")
+
+async def releases(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra le ultime uscite e i prossimi giochi"""
+    try:
+        news_list = await news_fetcher.search_news("release data uscita lancio nuovo gioco", limit=5)
+        if news_list:
+            msg = f"🎲 *Ultime Uscite e Prossimi Giochi*\n\n{format_news(news_list)}"
+            await update.message.reply_text(
+                msg,
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+            db.update_user_activity(update.effective_user.id)
+        else:
+            await update.message.reply_text("Nessuna notizia trovata sulle uscite.")
+    except Exception as e:
+        logger.error(f"Error in releases command: {e}")
+        await update.message.reply_text("Si è verificato un errore nel recupero delle uscite.")
+
+async def deals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra le offerte e sconti dei giochi"""
+    try:
+        news_list = await news_fetcher.search_news("offerta sconto prezzo ribasso giochi", limit=5)
+        if news_list:
+            msg = f"💰 *Offerte e Sconti Giochi*\n\n{format_news(news_list)}"
+            await update.message.reply_text(
+                msg,
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+            db.update_user_activity(update.effective_user.id)
+        else:
+            await update.message.reply_text("Nessuna offerta trovata al momento.")
+    except Exception as e:
+        logger.error(f"Error in deals command: {e}")
+        await update.message.reply_text("Si è verificato un errore nel recupero delle offerte.")
+
+async def top_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra le notizie più importanti del giorno"""
+    try:
+        # Recupera notizie da tutte le categorie
+        all_news = []
+        categories = ['generale', 'tech', 'ps5', 'xbox', 'switch', 'pc']
+        
+        for category in categories:
+            news = await news_fetcher.get_news(category, limit=1)
+            if news:
+                all_news.extend(news)
+        
+        # Prendi le top 5 notizie
+        top_5 = all_news[:5]
+        
+        if top_5:
+            msg = f"🏆 *TOP NEWS DEL GIORNO*\n\n{format_news(top_5)}"
+            await update.message.reply_text(
+                msg,
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+            db.update_user_activity(update.effective_user.id)
+        else:
+            await update.message.reply_text("Nessuna notizia trovata per oggi.")
+    except Exception as e:
+        logger.error(f"Error in top_news command: {e}")
+        await update.message.reply_text("Si è verificato un errore nel recupero delle top news.")
+
+async def filter_news(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Filtra notizie per piattaforma con bottoni inline"""
+    keyboard = [
+        [
+            InlineKeyboardButton("🎮 PS5", callback_data='filter_ps5'),
+            InlineKeyboardButton("🟩 Xbox", callback_data='filter_xbox'),
+            InlineKeyboardButton("🔴 Switch", callback_data='filter_switch')
+        ],
+        [
+            InlineKeyboardButton("💻 PC", callback_data='filter_pc'),
+            InlineKeyboardButton("📱 Tech", callback_data='filter_tech'),
+            InlineKeyboardButton("🎯 Tutte", callback_data='filter_all')
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        '🔍 *Filtra Notizie per Piattaforma*\n'
+        'Seleziona la piattaforma per vedere le ultime notizie:',
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+
+async def handle_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestisce la selezione del filtro notizie"""
+    query = update.callback_query
+    await query.answer()
+    
+    platform = query.data.replace('filter_', '')
+    if platform == 'all':
+        news_list = await news_fetcher.get_news('generale', limit=5)
+    else:
+        news_list = await news_fetcher.get_news(platform, limit=5)
+    
+    if news_list:
+        msg = f"📰 *Ultime notizie {platform.upper()}*\n\n{format_news(news_list)}"
+        await query.edit_message_text(
+            text=msg,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+    else:
+        await query.edit_message_text(f"Nessuna notizia trovata per {platform}.")
+
+async def daily_digest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Invia un riepilogo delle notizie più importanti del giorno"""
+    try:
+        user_id = update.effective_user.id
+        await send_digest(context.bot, user_id)
+        db.update_user_activity(user_id)
+    except Exception as e:
+        logger.error(f"Error in daily_digest command: {e}")
+        await update.message.reply_text("Si è verificato un errore nell'invio del digest giornaliero.")

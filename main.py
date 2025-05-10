@@ -116,16 +116,26 @@ class TelegramBot:
             CommandHandler('ia', commands.ai),
             CommandHandler('cerca', commands.search),
             CommandHandler('search', commands.search),
+            # New commands
+            CommandHandler('releases', commands.releases),
+            CommandHandler('deals', commands.deals),
+            CommandHandler('top', commands.top_news),
+            CommandHandler('filter', commands.filter_news),
+            CommandHandler('digest', commands.daily_digest),
+            # Group commands
             CommandHandler('subscribegroup', commands.subscribe_group),
             CommandHandler('group_start', commands.group_start),
             CommandHandler('group_settings', commands.group_settings),
+            # Admin commands
             CommandHandler('admin_stats', commands.admin_stats),
             CommandHandler('debug_scheduler', commands.debug_scheduler),
             CommandHandler('test_send', auto_send.test_send),
             CommandHandler('debug_db', commands.debug_database),
+            # Callbacks
             CallbackQueryHandler(commands.group_toggle_callback, pattern='^group_toggle:'),
             CallbackQueryHandler(commands.handle_preferences, pattern='^pref_'),
             CallbackQueryHandler(commands.handle_frequency, pattern='^freq_'),
+            CallbackQueryHandler(commands.handle_filter_callback, pattern='^filter_'),
         ]
 
         for handler in handlers:
