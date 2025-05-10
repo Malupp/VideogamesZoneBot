@@ -15,7 +15,7 @@ class Config:
     TECH_UPDATE_INTERVAL = int(os.getenv('TECH_UPDATE_INTERVAL', 120))
 
 # Inserisci il tuo token qui
-TOKEN = '7927920308:AAHS--egXHdQNvAMRH2brUHBYziDgd4jvRY'
+TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 # Chat ID per inviare le notizie in automatico
-CHAT_ID = '-1001036269713'
+CHAT_ID = os.getenv("CHAT_ID")
