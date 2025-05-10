@@ -1,22 +1,22 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, CallbackQueryHandler
 from utils.helpers import format_news
-from utils.news_fetcher import get_news
+from utils.news_fetcher import get_news, news_fetcher
 import config
-from utils import logger, news_fetcher
-from database import db
-from database.db import Database
-import logging
 from utils.logger import logger
+from database.db import Database
+from datetime import datetime, timedelta
+from handlers.auto_send import test_send, send_news_to_subscribers
+import logging
 
 command_logger = logger.getChild('commands')
+db = Database()
 
 # Funzione di benvenuto
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione start chiamata.")
-    print("Comando /start ricevuto.")  # Aggiungi print per monitorare l'uso del comando
+    print("Comando /start ricevuto.")
     await update.message.reply_text('Ciao! Scrivi /news per leggere le ultime notizie videoludiche.')
-
 
 async def preferenze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Menu per impostare le preferenze"""
@@ -36,7 +36,6 @@ async def preferenze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
 async def handle_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gestisce la selezione delle preferenze"""
     query = update.callback_query
@@ -44,10 +43,6 @@ async def handle_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     choice = query.data
     user_id = query.from_user.id
-
-    # Qui dovresti salvare nel database le preferenze
-    # Esempio pseudocodice:
-    # db.set_user_preference(user_id, preference=choice.replace('pref_', ''))
 
     if choice == 'pref_games':
         response = "Preferenza impostata: solo videogiochi 🎮"
@@ -58,7 +53,6 @@ async def handle_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await query.edit_message_text(text=response)
 
-
 async def handle_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gestisce la frequenza di invio"""
     query = update.callback_query
@@ -67,16 +61,12 @@ async def handle_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = query.data
     user_id = query.from_user.id
 
-    # Salva la preferenza di frequenza
-    # db.set_user_frequency(user_id, frequency=choice.replace('freq_', ''))
-
     if choice == 'freq_high':
         response = "Frequenza impostata: aggiornamenti frequenti 🔔"
     else:
         response = "Frequenza impostata: aggiornamenti ridotti 🔕"
 
     await query.edit_message_text(text=response)
-
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gestisce i messaggi che non sono comandi"""
@@ -93,29 +83,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Non ho capito. Scrivi /help per vedere i comandi disponibili."
         )
 
-async def cerca(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cerca notizie per parole chiave"""
-    if not context.args:
-        await update.message.reply_text("Usa: /cerca <termine>")
-        return
-
-    search_term = ' '.join(context.args)
-    news = news_fetcher.search_news(search_term)
-
-    if news:
-        # Formatta e invia i risultati
-        pass
-    else:
-        await update.message.reply_text("Nessun risultato trovato.")
-
-# Funzione per ottenere le notizie
 async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione news chiamata.")
     try:
         category = context.args[0].lower() if context.args else 'generale'
         print(f"Categoria richiesta: {category}")
-
-        # Aggiungi await qui per ottenere il risultato della coroutine
         news_list = await news_fetcher.get_news(category)
 
         print(f"Numero di notizie trovate: {len(news_list)}")
@@ -135,18 +107,16 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Errore durante il fetch delle news: {e}")
         await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
 
-# Funzione per ottenere il chat_id del gruppo
 async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione get_chat_id chiamata.")
-    chat_id = update.message.chat.id  # Ottieni il chat_id del gruppo
-    print(f"chat_id del gruppo: {chat_id}")  # Stampa il chat_id nel log
+    chat_id = update.message.chat.id
+    print(f"chat_id del gruppo: {chat_id}")
     await update.message.reply_text(f"Il chat_id di questo gruppo è: {chat_id}")
 
-# Comandi per le categorie specifiche
 async def ps5(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione ps5 chiamata.")
     try:
-        news_list = await news_fetcher.get_news('ps5')  # Aggiunto await
+        news_list = await news_fetcher.get_news('ps5')
         if news_list:
             print(f"Notizie per PS5: {len(news_list)}")
             msg = format_news(news_list)
@@ -161,7 +131,7 @@ async def ps5(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def xbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione xbox chiamata.")
     try:
-        news_list = await news_fetcher.get_news('xbox')  # Aggiunto await
+        news_list = await news_fetcher.get_news('xbox')
         if news_list:
             print(f"Notizie per Xbox: {len(news_list)}")
             msg = format_news(news_list)
@@ -176,7 +146,7 @@ async def xbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def switch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione switch chiamata.")
     try:
-        news_list = await news_fetcher.get_news('switch')  # Aggiunto await
+        news_list = await news_fetcher.get_news('switch')
         if news_list:
             print(f"Notizie per Switch: {len(news_list)}")
             msg = format_news(news_list)
@@ -191,7 +161,7 @@ async def switch(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def pc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione pc chiamata.")
     try:
-        news_list = await news_fetcher.get_news('pc')  # Aggiunto await
+        news_list = await news_fetcher.get_news('pc')
         if news_list:
             print(f"Notizie per PC: {len(news_list)}")
             msg = format_news(news_list)
@@ -206,7 +176,7 @@ async def pc(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def tech(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione tech chiamata.")
     try:
-        news_list = await news_fetcher.get_news('tech')  # Aggiunto await
+        news_list = await news_fetcher.get_news('tech')
         if news_list:
             print(f"Notizie per Tech: {len(news_list)}")
             msg = format_news(news_list)
@@ -221,7 +191,7 @@ async def tech(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def news_5(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione news_5 chiamata.")
     try:
-        news_list = await get_news(limit=5)  # Aggiunto await
+        news_list = await get_news(limit=5)
         if news_list:
             print(f"Numero di notizie trovate: {len(news_list)}")
             msg = format_news(news_list)
@@ -235,7 +205,7 @@ async def news_5(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def news_10(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione news_10 chiamata.")
     try:
-        news_list = await get_news(limit=10)  # Aggiunto await
+        news_list = await get_news(limit=10)
         if news_list:
             print(f"Numero di notizie trovate: {len(news_list)}")
             msg = format_news(news_list)
@@ -246,16 +216,14 @@ async def news_10(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Errore in news_10: {e}")
         await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
 
-# Variabile globale per memorizzare le ultime notizie inviate per chat
 LAST_NEWS = {}
-
 
 async def sommario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione sommario chiamata.")
     try:
         category = context.args[0].lower() if context.args else 'generale'
         print(f"Categoria richiesta: {category}")
-        news_list = await news_fetcher.get_news(category)  # Aggiunto await
+        news_list = await news_fetcher.get_news(category)
 
         if news_list:
             print(f"Numero di notizie trovate: {len(news_list)}")
@@ -289,6 +257,130 @@ async def dettaglio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Errore nella funzione dettaglio: {e}")
         await update.message.reply_text("Devi specificare il numero della notizia. Esempio: /dettaglio 2")
 
+async def group_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestisce l'aggiunta del bot a un gruppo"""
+    chat = update.effective_chat
+    if chat.type == 'private':
+        await update.message.reply_text("Questo comando funziona solo nei gruppi!")
+        return
+
+    try:
+        if db.add_group(chat.id, chat.title):
+            response = (
+                "✅ *Gruppo registrato con successo!*\n\n"
+                "Ora puoi configurare le categorie di notizie che vuoi ricevere.\n"
+                "Usa /group_settings per modificare le preferenze"
+            )
+        else:
+            response = "ℹ️ Il gruppo è già registrato. Usa /group_settings per modificare le preferenze"
+
+        await update.message.reply_text(response, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error in group_start: {e}")
+        await update.message.reply_text("❌ Si è verificato un errore durante la registrazione")
+
+async def group_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Menu impostazioni gruppo"""
+    chat = update.effective_chat
+    if chat.type == 'private':
+        await update.message.reply_text("Questo comando funziona solo nei gruppi!")
+        return
+
+    try:
+        categories = db.get_user_categories(chat.id)
+        keyboard = [
+            [InlineKeyboardButton(
+                f"{'✅' if 'generale' in categories else '❌'} Generale",
+                callback_data=f"group_toggle:generale:{chat.id}")],
+            [InlineKeyboardButton(
+                f"{'✅' if 'tech' in categories else '❌'} Tech",
+                callback_data=f"group_toggle:tech:{chat.id}")],
+            [InlineKeyboardButton(
+                f"{'✅' if 'ps5' in categories else '❌'} PS5",
+                callback_data=f"group_toggle:ps5:{chat.id}")],
+            [InlineKeyboardButton(
+                f"{'✅' if 'xbox' in categories else '❌'} Xbox",
+                callback_data=f"group_toggle:xbox:{chat.id}")],
+            [InlineKeyboardButton(
+                f"{'✅' if 'switch' in categories else '❌'} Switch",
+                callback_data=f"group_toggle:switch:{chat.id}")],
+            [InlineKeyboardButton(
+                f"{'✅' if 'pc' in categories else '❌'} PC",
+                callback_data=f"group_toggle:pc:{chat.id}")],
+        ]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "⚙️ *Impostazioni Gruppo*\n\nSeleziona le categorie di notizie da ricevere:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error in group_settings: {e}")
+        await update.message.reply_text("❌ Errore nel caricamento delle impostazioni")
+
+async def group_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestisce la selezione delle categorie"""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, category, group_id = query.data.split(':')
+        group_id = int(group_id)
+
+        current_categories = db.get_user_categories(group_id)
+        if category in current_categories:
+            db.unsubscribe(group_id, category)
+            new_status = "❌"
+        else:
+            db.add_subscriber(group_id, category, 'normal')
+            new_status = "✅"
+
+        # Aggiorna il messaggio
+        keyboard = []
+        all_categories = ['generale', 'tech', 'ps5', 'xbox', 'switch', 'pc']
+        current_categories = db.get_user_categories(group_id)
+
+        for cat in all_categories:
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{'✅' if cat in current_categories else '❌'} {cat.capitalize()}",
+                    callback_data=f"group_toggle:{cat}:{group_id}")
+            ])
+
+        await query.edit_message_text(
+            text="⚙️ *Impostazioni Gruppo*\n\nSeleziona le categorie di notizie da ricevere:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error in group_toggle_callback: {e}")
+        await query.edit_message_text("❌ Si è verificato un errore")
+
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra le statistiche del bot (solo admin)"""
+    try:
+        user_id = update.effective_user.id
+        if user_id not in config.ADMIN_IDS:
+            await update.message.reply_text("❌ Accesso negato")
+            return
+
+        total_users = db.get_total_users()
+        total_news_sent = db.get_total_news_sent()
+        active_groups = db.get_active_groups()
+
+        message = (
+            "📊 *Statistiche Bot*\n\n"
+            f"• Utenti totali: {total_users}\n"
+            f"• Notizie inviate: {total_news_sent}\n"
+            f"• Gruppi attivi: {len(active_groups)}\n\n"
+            f"Ultimo aggiornamento: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        )
+
+        await update.message.reply_text(message, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error in admin_stats: {e}")
+        await update.message.reply_text("❌ Errore nel recupero delle statistiche")
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Statistiche del bot (solo admin)"""
@@ -297,11 +389,13 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Non autorizzato")
         return
 
-    stats = db.get_stats()
+    total_users = db.get_total_users()
+    total_news_sent = db.get_total_news_sent()
+
     message = (
-        f"👥 Utenti totali: {stats['total_users']}\n"
-        f"📰 Notizie inviate: {stats['total_news_sent']}\n"
-        f"🕒 Ultimo aggiornamento: {stats['last_update']}"
+        f"👥 Utenti totali: {total_users}\n"
+        f"📰 Notizie inviate: {total_news_sent}\n"
+        f"🕒 Ultimo aggiornamento: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     )
     await update.message.reply_text(message)
 
@@ -322,7 +416,6 @@ async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
     else:
         await update.message.reply_text("Nessuna notizia trovata su IA.")
-
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cerca notizie per parole chiave"""
@@ -378,18 +471,16 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"Messaggio inviato a {len(users)} utenti")
 
-
 async def subscribe_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Iscrive il gruppo alle notizie automatiche"""
+    """Versione semplificata e completamente robusta"""
     try:
         chat_id = update.effective_chat.id
-        command_logger.info(f"Ricevuto comando subscribe_group da {chat_id}")
+        command_logger.info(f"Processing /subscribegroup for {chat_id}")
 
         if update.effective_chat.type == 'private':
-            await update.message.reply_text("⚠️ Questo comando funziona solo nei gruppi!")
+            await update.message.reply_text("❌ Comando valido solo per gruppi!")
             return
 
-        db = Database()
         categories = ['generale', 'tech', 'ps5', 'xbox', 'switch', 'pc']
         success = []
 
@@ -398,22 +489,47 @@ async def subscribe_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if db.add_subscriber(chat_id=chat_id, category=category, frequency='normal'):
                     success.append(category)
             except Exception as e:
-                command_logger.error(f"Errore iscrizione categoria {category}: {e}", exc_info=True)
+                command_logger.warning(f"Category {category} error: {str(e)}")
+                continue
 
         if success:
-            response = (f"✅ Gruppo iscritto correttamente alle categorie:\n"
-                        f"{', '.join(success)}\n\n"
-                        f"Ora riceverai gli aggiornamenti automatici!")
-            command_logger.info(f"Gruppo {chat_id} iscritto a {len(success)} categorie")
+            response = (
+                f"✅ Gruppo iscritto correttamente a {len(success)} categorie!\n\n"
+                f"• {', '.join(success)}\n\n"
+                f"Gli aggiornamenti inizieranno con il prossimo invio automatico."
+            )
+            command_logger.info(f"Gruppo {chat_id} registrato per {len(success)} categorie")
         else:
-            response = "❌ Errore durante l'iscrizione del gruppo."
-            command_logger.error("Fallita iscrizione gruppo")
+            response = "⚠️ Il gruppo era già iscritto a tutte le categorie"
+            command_logger.info(f"Gruppo {chat_id} già registrato")
 
         await update.message.reply_text(response)
 
     except Exception as e:
-        command_logger.critical(f"Errore grave in subscribe_group: {str(e)}", exc_info=True)
-        await update.message.reply_text("❌ Si è verificato un errore interno.")
+        command_logger.critical(f"Fatal error in subscribe_group: {str(e)}", exc_info=True)
+        await update.message.reply_text("⚠️ Si è verificato un errore. Riprova più tardi.")
+
+
+async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando di test per verificare l'invio automatico"""
+    try:
+        await update.message.reply_text("⚙️ **Test avviato**: provo a inviare notizie...")
+
+        # Forza l'invio immediato per la categoria 'generale'
+        result = await send_news_to_subscribers(
+            context.bot,
+            'generale',
+            force_update=True
+        )
+
+        await update.message.reply_text(
+            f"✅ **Test completato!**\n"
+            f"Notizie inviate a *{result}* utenti/gruppi.",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Errore durante test_send: {e}", exc_info=True)
+        await update.message.reply_text("❌ Errore durante il test. Controlla i log.")
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mostra i comandi disponibili"""
@@ -448,3 +564,13 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione error_handler chiamata.")
     print(f"Errore: {context.error}")
+
+async def _debug_scheduler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    jobs = context.application.scheduler.get_jobs()
+    status = [
+        f"{j.id} - Next: {j.next_run_time} - Last: {j.last_run_time}"
+        for j in jobs
+    ]
+    await update.message.reply_text(
+        "📊 Scheduler Debug:\n" + "\n".join(status)
+    )

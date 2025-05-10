@@ -73,34 +73,48 @@ class TelegramBot:
             await self._shutdown()
 
     async def _on_application_ready(self, app):
-        """Callback when application is ready"""
-        logger.info("Application ready, setting up periodic jobs")
+        """Configurazione garantita dello scheduler"""
         try:
+            # 1. Inizializza lo scheduler con opzioni robuste
+            self.scheduler = AsyncIOScheduler(
+                timezone="UTC",
+                job_defaults={
+                    'misfire_grace_time': 300,
+                    'coalesce': True,
+                    'max_instances': 1
+                }
+            )
+
+            # 2. Configura i job PRIMA di avviare
             auto_send.setup_periodic_jobs(self.application, self.scheduler)
+
+            # 3. Avvio esplicito con controllo
             self.scheduler.start()
-            logger.info("Scheduler started with jobs: %s", self.scheduler.get_jobs())
+            logger.info(f"🚀 Scheduler avviato con {len(self.scheduler.get_jobs())} job attivi")
+
+            # 4. Verifica iniziale
+            for job in self.scheduler.get_jobs():
+                logger.info(f"Job {job.id} - Prossima esecuzione: {job.next_run_time}")
+
         except Exception as e:
-            logger.error(f"Failed to start scheduler: {e}")
+            logger.critical(f"CRITICAL: Scheduler failed - {e}", exc_info=True)
             raise
 
     async def _background_tasks(self):
-        """Handle background tasks"""
-        try:
-            # Keep the task running until shutdown
-            while not self._shutdown_event.is_set():
-                try:
-                    # Refresh feeds periodically
-                    await news_fetcher.refresh_feeds()
-                    await asyncio.sleep(Config.NEWS_UPDATE_INTERVAL * 60)
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    logger.error(f"Background task error: {e}")
-                    await asyncio.sleep(60)  # Wait before retrying
+        """Task di monitoraggio continuo"""
+        while not self._shutdown_event.is_set():
+            try:
+                active_jobs = self.scheduler.get_jobs()
+                logger.info(f"🔍 Scheduler Status - Jobs: {len(active_jobs)}")
 
-        except Exception as e:
-            logger.error(f"Background task fatal error: {e}")
-            self._shutdown_event.set()
+                if not active_jobs:
+                    logger.warning("⚠️ Nessun job attivo! Re-inizializzo...")
+                    auto_send.setup_periodic_jobs(self.application, self.scheduler)
+
+                await asyncio.sleep(60)
+
+            except Exception as e:
+                logger.error(f"Background task error: {e}")
 
     def _register_handlers(self):
         """Register all command handlers"""
@@ -124,6 +138,11 @@ class TelegramBot:
             CommandHandler('cerca', commands.search),
             CommandHandler('search', commands.search),
             CommandHandler('subscribegroup', commands.subscribe_group),
+            CommandHandler('group_start', commands.group_start),
+            CommandHandler('group_settings', commands.group_settings),
+            CommandHandler('admin_stats', commands.admin_stats),
+            CommandHandler('test_send', auto_send.test_send),
+            CallbackQueryHandler(commands.group_toggle_callback, pattern='^group_toggle:'),
             CallbackQueryHandler(commands.handle_preferences, pattern='^pref_'),
             CallbackQueryHandler(commands.handle_frequency, pattern='^freq_'),
             CommandHandler('test_auto_send', self._test_auto_send)  # New test command

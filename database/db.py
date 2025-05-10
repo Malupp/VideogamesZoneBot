@@ -1,30 +1,33 @@
 import sqlite3
-from typing import List, Dict, Optional
-from utils.logger import setup_logger
+from typing import List, Dict, Optional, Any
+from utils.logger import logger
 from datetime import datetime, timedelta
 import os
 import json
 
-logger = setup_logger()
-
 
 class Database:
     def __init__(self, db_path: str = 'database/bot.db'):
-        self.logger = logger.getChild('database')  # Crea un sub-logger
         """Inizializza il database e crea le tabelle necessarie"""
+        self.logger = logger.getChild('database')
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db_path = db_path
-        self.initialize_db()
+        self._initialize_db()
 
-    def get_connection(self) -> sqlite3.Connection:
-        """Restituisce una connessione al database"""
-        return sqlite3.connect(self.db_path)
+    def _get_connection(self) -> sqlite3.Connection:
+        """Restituisce una connessione configurata correttamente"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = lambda cursor, row: {
+            col[0]: row[idx] for idx, col in enumerate(cursor.description)
+        }
+        return conn
 
-    def initialize_db(self) -> None:
+    def _initialize_db(self) -> None:
         """Crea le tabelle del database se non esistono"""
         try:
-            with self.get_connection() as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
+                cursor.execute("PRAGMA foreign_keys = ON")
 
                 # Tabella utenti
                 cursor.execute('''
@@ -35,7 +38,7 @@ class Database:
                     last_name TEXT,
                     joined_date TEXT,
                     last_activity TEXT,
-                    preferences TEXT,
+                    preferences TEXT DEFAULT '{}',
                     marked_for_removal INTEGER DEFAULT 0
                 )
                 ''')
@@ -47,7 +50,7 @@ class Database:
                     category TEXT,
                     subscribed_date TEXT,
                     PRIMARY KEY (user_id, category),
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
                 ''')
 
@@ -68,58 +71,57 @@ class Database:
                     user_id INTEGER PRIMARY KEY,
                     news_received INTEGER DEFAULT 0,
                     news_read INTEGER DEFAULT 0,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                )
+                ''')
+
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS groups (
+                    group_id INTEGER PRIMARY KEY,
+                    title TEXT,
+                    added_date TEXT,
+                    is_active BOOLEAN DEFAULT 1,
+                    categories TEXT DEFAULT '["generale"]'
                 )
                 ''')
 
                 conn.commit()
-                logger.info("Database initialized successfully")
+                self.logger.info("Database initialized successfully")
 
         except Exception as e:
-            logger.error(f"Error initializing database: {e}")
+            self.logger.error(f"Error initializing database: {e}")
             raise
 
     def add_user(self, user_id: int, username: Optional[str] = None,
                  first_name: Optional[str] = None, last_name: Optional[str] = None) -> bool:
         """Aggiunge un nuovo utente al database"""
         try:
-            with self.get_connection() as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
-
-                # Verifica se l'utente esiste già
-                cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
-                if cursor.fetchone():
-                    cursor.execute(
-                        "UPDATE users SET last_activity = ?, username = ?, first_name = ?, last_name = ? WHERE user_id = ?",
-                        (datetime.now().isoformat(), username, first_name, last_name, user_id)
-                    )
-                    return False
-
-                # Aggiunge il nuovo utente
                 cursor.execute(
-                    "INSERT INTO users (user_id, username, first_name, last_name, joined_date, last_activity, preferences) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT OR IGNORE INTO users (user_id, username, first_name, last_name, joined_date, last_activity) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
                     (user_id, username, first_name, last_name,
-                     datetime.now().isoformat(), datetime.now().isoformat(), '{}')
+                     datetime.now().isoformat(), datetime.now().isoformat())
                 )
 
-                # Aggiunge le statistiche
-                cursor.execute(
-                    "INSERT INTO user_stats (user_id) VALUES (?)",
-                    (user_id,)
-                )
-
-                conn.commit()
-                return True
+                if cursor.rowcount > 0:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO user_stats (user_id) VALUES (?)",
+                        (user_id,)
+                    )
+                    conn.commit()
+                    return True
+                return False
 
         except Exception as e:
-            logger.error(f"Error adding user {user_id}: {e}")
+            self.logger.error(f"Error adding user {user_id}: {e}")
             return False
 
     def update_user_activity(self, user_id: int) -> bool:
         """Aggiorna la data dell'ultima attività dell'utente"""
         try:
-            with self.get_connection() as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE users SET last_activity = ?, marked_for_removal = 0 WHERE user_id = ?",
@@ -127,42 +129,60 @@ class Database:
                 )
                 return cursor.rowcount > 0
         except Exception as e:
-            logger.error(f"Error updating activity for user {user_id}: {e}")
+            self.logger.error(f"Error updating activity for user {user_id}: {e}")
             return False
 
-    def subscribe(self, user_id: int, category: str) -> bool:
-        """Iscrive un utente a una categoria"""
+    def add_subscriber(self, chat_id: int, category: str, frequency: str = 'normal') -> bool:
+        """Aggiunge un iscritto al database (funziona per utenti e gruppi)"""
         try:
-            with self.get_connection() as conn:
+            with self._get_connection() as conn:
+                # Crea l'utente/gruppo se non esiste
+                self.add_user(chat_id)
+
+                # Iscrivi alla categoria
                 cursor = conn.cursor()
                 cursor.execute(
-                    "INSERT OR IGNORE INTO subscriptions (user_id, category, subscribed_date) "
+                    "INSERT OR REPLACE INTO subscriptions (user_id, category, subscribed_date) "
                     "VALUES (?, ?, ?)",
-                    (user_id, category, datetime.now().isoformat())
+                    (chat_id, category, datetime.now().isoformat())
                 )
-                return cursor.rowcount > 0
+
+                # Aggiorna le preferenze
+                prefs = self.get_user_preferences(chat_id) or {}
+                prefs.update({'frequency': frequency})
+                cursor.execute(
+                    "UPDATE users SET preferences = ? WHERE user_id = ?",
+                    (json.dumps(prefs), chat_id)
+                )
+
+                conn.commit()
+                return True
+
         except Exception as e:
-            logger.error(f"Error subscribing user {user_id} to {category}: {e}")
+            self.logger.error(f"Error in add_subscriber for {chat_id}: {e}")
             return False
 
-    def unsubscribe(self, user_id: int, category: str) -> bool:
-        """Disiscrive un utente da una categoria"""
+    def get_user_preferences(self, user_id: int) -> Dict[str, Any]:
+        """Restituisce le preferenze di un utente"""
         try:
-            with self.get_connection() as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "DELETE FROM subscriptions WHERE user_id = ? AND category = ?",
-                    (user_id, category)
+                    "SELECT preferences FROM users WHERE user_id = ?",
+                    (user_id,)
                 )
-                return cursor.rowcount > 0
+                row = cursor.fetchone()
+                if row and row['preferences']:
+                    return json.loads(row['preferences'])
+                return {}
         except Exception as e:
-            logger.error(f"Error unsubscribing user {user_id} from {category}: {e}")
-            return False
+            self.logger.error(f"Error getting preferences for user {user_id}: {e}")
+            return {}
 
     def get_subscribers(self, category: str) -> Dict[int, Dict]:
         """Restituisce tutti gli iscritti a una categoria con le loro preferenze"""
         try:
-            with self.get_connection() as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT u.user_id, u.preferences 
@@ -176,105 +196,130 @@ class Database:
                     for row in cursor.fetchall()
                 }
         except Exception as e:
-            logger.error(f"Error getting subscribers for {category}: {e}")
+            self.logger.error(f"Error getting subscribers for {category}: {e}")
             return {}
 
-    def get_user_categories(self, user_id: int) -> List[str]:
-        """Restituisce le categorie a cui è iscritto un utente"""
+    # ... (altri metodi rimangono identici ma con _get_connection invece di get_connection)
+    # Assicurati di sostituire tutte le occorrenze di get_connection con _get_connection
+
+    def cleanup_database(self):
+        """Pulisce il database da record inconsistenti"""
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT category FROM subscriptions WHERE user_id = ?",
-                    (user_id,)
-                )
-                return [row['category'] for row in cursor.fetchall()]
+            with self._get_connection() as conn:
+                # Fix preferences vuote/nulle
+                conn.execute("UPDATE users SET preferences = '{}' WHERE preferences IS NULL OR preferences = ''")
+                # Rimuovi subscription senza user
+                conn.execute("DELETE FROM subscriptions WHERE user_id NOT IN (SELECT user_id FROM users)")
+                conn.commit()
+                self.logger.info("Database cleanup completed")
         except Exception as e:
-            logger.error(f"Error getting categories for user {user_id}: {e}")
-            return []
+            self.logger.error(f"Error during database cleanup: {e}")
 
-    def update_user_preferences(self, user_id: int, preferences: Dict) -> bool:
-        """Aggiorna le preferenze di un utente"""
+    def add_group(self, group_id: int, title: str, categories: List[str] = None):
+        """Aggiunge un nuovo gruppo al database"""
+        if categories is None:
+            categories = ['generale']
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Ottieni le preferenze esistenti
-                cursor.execute("SELECT preferences FROM users WHERE user_id = ?", (user_id,))
-                row = cursor.fetchone()
-
-                if not row:
-                    return False
-
-                # Unisci le nuove preferenze con quelle esistenti
-                existing_prefs = json.loads(row['preferences']) if row['preferences'] else {}
-                existing_prefs.update(preferences)
-
-                # Aggiorna il database
-                cursor.execute(
-                    "UPDATE users SET preferences = ? WHERE user_id = ?",
-                    (json.dumps(existing_prefs), user_id)
-                )
+            with self._get_connection() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO groups (group_id, title, added_date, categories) "
+                    "VALUES (?, ?, ?, ?)",
+                    (group_id, title, datetime.now().isoformat(), json.dumps(categories)))
                 return True
-
         except Exception as e:
-            logger.error(f"Error updating preferences for user {user_id}: {e}")
+            self.logger.error(f"Error adding group {group_id}: {e}")
             return False
 
-    def get_user_preferences(self, user_id: int) -> Dict:
-        """Restituisce le preferenze di un utente"""
+    def get_active_groups(self, category: str = None) -> Dict[int, Dict]:
+        """Restituisce tutti i gruppi attivi, eventualmente filtrati per categoria"""
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT preferences FROM users WHERE user_id = ?",
-                    (user_id,)
-                )
-                row = cursor.fetchone()
-                return json.loads(row['preferences']) if row and row['preferences'] else {}
+            with self._get_connection() as conn:
+                query = "SELECT group_id, title, categories FROM groups WHERE is_active = 1"
+                params = ()
+
+                if category:
+                    query += " AND categories LIKE ?"
+                    params = (f'%"{category}"%',)
+
+                cursor = conn.execute(query, params)
+                return {
+                    row['group_id']: {
+                        'title': row['title'],
+                        'categories': json.loads(row['categories'])
+                    }
+                    for row in cursor.fetchall()
+                }
         except Exception as e:
-            logger.error(f"Error getting preferences for user {user_id}: {e}")
+            self.logger.error(f"Error getting groups: {e}")
             return {}
 
-    def log_news_sent(self, category: str, sent_count: int) -> None:
-        """Registra le statistiche di invio delle notizie"""
+    def update_group_categories(self, group_id: int, categories: List[str]) -> bool:
+        """Aggiorna le categorie di un gruppo"""
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Conta gli iscritti
-                cursor.execute(
-                    "SELECT COUNT(*) as count FROM subscriptions WHERE category = ?",
-                    (category,)
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE groups SET categories = ? WHERE group_id = ?",
+                    (json.dumps(categories), group_id)
                 )
-                subscribers_count = cursor.fetchone()['count']
-
-                # Registra l'invio
-                cursor.execute(
-                    "INSERT INTO news_stats (date, category, subscribers_count, sent_count) "
-                    "VALUES (?, ?, ?, ?)",
-                    (datetime.now().isoformat(), category, subscribers_count, sent_count)
-                )
+                return True
         except Exception as e:
-            logger.error(f"Error logging news stats for {category}: {e}")
+            self.logger.error(f"Error updating group {group_id} categories: {e}")
+            return False
 
-    def increment_news_sent(self, user_id: int) -> None:
-        """Incrementa il contatore delle notizie inviate a un utente"""
+    def unsubscribe(self, user_id: int, category: str) -> bool:
+        """Disiscrive un utente/gruppo da una categoria"""
         try:
-            with self.get_connection() as conn:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM subscriptions WHERE user_id = ? AND category = ?",
+                    (user_id, category)
+                )
+                return cursor.rowcount > 0
+        except Exception as e:
+            self.logger.error(f"Error unsubscribing {user_id} from {category}: {e}")
+            return False
+
+    def increment_news_sent(self, user_id: int) -> bool:
+        """Incrementa il contatore di notizie inviate"""
+        try:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE user_stats SET news_received = news_received + 1 "
                     "WHERE user_id = ?",
                     (user_id,)
                 )
+                return cursor.rowcount > 0
         except Exception as e:
-            logger.error(f"Error incrementing news count for user {user_id}: {e}")
+            self.logger.error(f"Error incrementing news count for {user_id}: {e}")
+            return False
+
+    def log_news_sent(self, category: str, sent_count: int) -> bool:
+        """Registra l'invio di notizie nelle statistiche"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT COUNT(*) as count FROM subscriptions WHERE category = ?",
+                    (category,)
+                )
+                subscribers_count = cursor.fetchone()['count']
+
+                cursor.execute(
+                    "INSERT INTO news_stats (date, category, subscribers_count, sent_count) "
+                    "VALUES (?, ?, ?, ?)",
+                    (datetime.now().isoformat(), category, subscribers_count, sent_count)
+                )
+                return True
+        except Exception as e:
+            self.logger.error(f"Error logging news stats for {category}: {e}")
+            return False
 
     def get_inactive_users(self, days: int = 60) -> List[int]:
-        """Restituisce gli ID degli utenti inattivi"""
+        """Restituisce gli utenti inattivi"""
         try:
-            with self.get_connection() as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
                 cursor.execute(
@@ -284,106 +329,47 @@ class Database:
                 )
                 return [row['user_id'] for row in cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Error getting inactive users: {e}")
+            self.logger.error(f"Error getting inactive users: {e}")
             return []
 
-    def mark_for_removal(self, user_id: int) -> None:
+    def mark_for_removal(self, user_id: int) -> bool:
         """Segna un utente per la rimozione"""
         try:
-            with self.get_connection() as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE users SET marked_for_removal = 1 WHERE user_id = ?",
                     (user_id,)
                 )
+                return cursor.rowcount > 0
         except Exception as e:
-            logger.error(f"Error marking user {user_id} for removal: {e}")
+            self.logger.error(f"Error marking user {user_id} for removal: {e}")
+            return False
 
-    def remove_user(self, user_id: int) -> None:
-        """Rimuove completamente un utente dal database"""
+    def remove_user(self, user_id: int) -> bool:
+        """Rimuove completamente un utente"""
         try:
-            with self.get_connection() as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
-
-                # Rimuovi da tutte le tabelle
                 cursor.execute("DELETE FROM subscriptions WHERE user_id = ?", (user_id,))
                 cursor.execute("DELETE FROM user_stats WHERE user_id = ?", (user_id,))
                 cursor.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
-
-        except Exception as e:
-            logger.error(f"Error removing user {user_id}: {e}")
-
-    def get_stats(self) -> Dict:
-        """Restituisce le statistiche generali del bot"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-
-                stats = {
-                    'total_users': 0,
-                    'total_news_sent': 0,
-                    'last_update': datetime.now().isoformat()
-                }
-
-                # Conta utenti totali
-                cursor.execute("SELECT COUNT(*) as count FROM users")
-                row = cursor.fetchone()
-                if row:
-                    stats['total_users'] = row['count']
-
-                # Conta notizie inviate totali
-                cursor.execute("SELECT SUM(sent_count) as total FROM news_stats")
-                row = cursor.fetchone()
-                if row and row['total']:
-                    stats['total_news_sent'] = row['total']
-
-                return stats
-
-        except Exception as e:
-            logger.error(f"Error getting stats: {e}")
-            return {
-                'total_users': 0,
-                'total_news_sent': 0,
-                'last_update': datetime.now().isoformat()
-            }
-
-    def add_subscriber(self, chat_id: int, category: str, frequency: str = 'normal') -> bool:
-        """Aggiunge un iscritto al database (funziona per utenti e gruppi)"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Verifica se esiste già come utente, altrimenti crea un record base
-                cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (chat_id,))
-                if not cursor.fetchone():
-                    cursor.execute(
-                        "INSERT INTO users (user_id, joined_date, last_activity, preferences) "
-                        "VALUES (?, ?, ?, ?)",
-                        (chat_id, datetime.now().isoformat(), datetime.now().isoformat(),
-                         json.dumps({'frequency': frequency}))
-                    )
-
-                    # Aggiungi alle statistiche
-                    cursor.execute(
-                        "INSERT INTO user_stats (user_id) VALUES (?)",
-                        (chat_id,)
-                    )
-
-                # Iscrivi alla categoria
-                cursor.execute(
-                    "INSERT OR REPLACE INTO subscriptions (user_id, category, subscribed_date) "
-                    "VALUES (?, ?, ?)",
-                    (chat_id, category, datetime.now().isoformat())
-                )
-
-                # Aggiorna le preferenze
-                prefs = self.get_user_preferences(chat_id)
-                prefs.update({'frequency': frequency})
-                self.update_user_preferences(chat_id, prefs)
-
-                conn.commit()
+                cursor.execute("DELETE FROM groups WHERE group_id = ?", (user_id,))
                 return True
-
         except Exception as e:
-            logger.error(f"Error in add_subscriber for {chat_id}: {e}")
+            self.logger.error(f"Error removing user {user_id}: {e}")
             return False
+
+    def get_user_categories(self, user_id: int) -> List[str]:
+        """Restituisce le categorie a cui è iscritto un utente"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT category FROM subscriptions WHERE user_id = ?",
+                    (user_id,)
+                )
+                return [row['category'] for row in cursor.fetchall()]
+        except Exception as e:
+            self.logger.error(f"Error getting categories for user {user_id}: {e}")
+            return []
