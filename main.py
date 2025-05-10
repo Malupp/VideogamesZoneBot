@@ -5,7 +5,6 @@ import asyncio
 import logging
 from utils.news_fetcher import news_fetcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 
 # Configure logging
 logging.basicConfig(
@@ -26,7 +25,6 @@ class TelegramBot:
     async def run(self):
         """Main entry point for the bot"""
         logger.info("Starting bot initialization")
-        self.logger.info("Starting bot initialization")
         try:
             # Initialize application
             self.application = (
@@ -36,7 +34,7 @@ class TelegramBot:
                 .build()
             )
 
-            # Initialize scheduler with explicit options
+            # Initialize scheduler
             self.scheduler = AsyncIOScheduler(
                 timezone="UTC",
                 job_defaults={
@@ -52,11 +50,15 @@ class TelegramBot:
             # Initialize news fetcher
             await news_fetcher.initialize()
 
-            # Start the bot
-            logger.info("Starting bot polling")
+            # Start the bot with webhook
             await self.application.initialize()
             await self.application.start()
-            await self.application.updater.start_polling()
+
+            # Get Render assigned URL
+            webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+            await self.application.bot.set_webhook(webhook_url)
+
+            logger.info(f"Webhook set to: {webhook_url}")
 
             # Start background tasks
             self._background_task = asyncio.create_task(self._background_tasks())
@@ -210,8 +212,8 @@ async def main():
     bot = TelegramBot()
     await bot.run()
 
-
 if __name__ == '__main__':
+    import os
     try:
         # Create a new event loop for the main thread
         loop = asyncio.new_event_loop()
