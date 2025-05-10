@@ -113,12 +113,12 @@ def setup_periodic_jobs(application, scheduler):
 
     # Definisci gli intervalli per ogni categoria
     intervals = {
-        'generale': {'interval': 1600, 'first_run': True},  # 1 ora
-        'tech': {'interval': 3600, 'first_run': False},  # 2 ore
-        'ps5': {'interval': 3800, 'first_run': False},  # 2 ore
-        'xbox': {'interval': 4000, 'first_run': False},  # 2 ore
-        'switch': {'interval': 4200, 'first_run': False},  # 2 ore
-        'pc': {'interval': 4400, 'first_run': False},  # 2 ore
+        'generale': {'interval': 400, 'first_run': True},  # 1 ora
+        'tech': {'interval': 900, 'first_run': False},  # 2 ore
+        'ps5': {'interval': 1300, 'first_run': False},  # 2 ore
+        'xbox': {'interval': 1500, 'first_run': False},  # 2 ore
+        'switch': {'interval': 1900, 'first_run': False},  # 2 ore
+        'pc': {'interval': 2300, 'first_run': False},  # 2 ore
     }
 
     # Aggiungi i job con offset per evitare sovraccarichi
@@ -158,6 +158,13 @@ def setup_periodic_jobs(application, scheduler):
         id='reset_cache',
         replace_existing=True
     )
+
+    # Configurazione più robusta
+    scheduler.configure({
+        'apscheduler.job_defaults.coalesce': True,
+        'apscheduler.job_defaults.max_instances': 1,
+        'apscheduler.timezone': 'UTC'
+    })
 
     logger.info(f"✅ Job attivi: {[j.id for j in scheduler.get_jobs()]}")
 

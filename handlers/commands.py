@@ -625,35 +625,43 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def debug_scheduler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mostra lo stato dello scheduler (solo admin)"""
+    """Mostra lo stato dello scheduler"""
     try:
-        user_id = update.effective_user.id
-        if user_id not in config.ADMIN_IDS:
+        # Verifica che l'utente sia admin
+        if update.effective_user.id not in config.ADMIN_IDS:
             await update.message.reply_text("❌ Accesso negato")
             return
 
-        if not hasattr(context.application, 'scheduler') or not context.application.scheduler:
+        # Accedi allo scheduler direttamente dall'applicazione bot
+        bot_app = context.application
+        if not hasattr(bot_app, 'scheduler') or not bot_app.scheduler:
             await update.message.reply_text("⚠️ Scheduler non inizializzato")
             return
 
-        jobs = context.application.scheduler.get_jobs()
+        jobs = bot_app.scheduler.get_jobs()
         if not jobs:
             await update.message.reply_text("⚠️ Nessun job attivo nello scheduler")
             return
 
-        message = "📊 *Stato Scheduler*\n\n"
+        message = "📊 *Stato Scheduler*:\n\n"
         for job in jobs:
+            next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "N/A"
+            interval = str(job.trigger.interval) if hasattr(job.trigger, 'interval') else "Una tantum"
+
             message += (
                 f"• *{job.id}*\n"
-                f"  Prossima esecuzione: {job.next_run_time}\n"
-                f"  Intervallo: {job.trigger.interval}\n\n"
+                f"  ⏱️ Prossima esecuzione: `{next_run}`\n"
+                f"  🔄 Intervallo: `{interval}`\n\n"
             )
 
         await update.message.reply_text(message, parse_mode="Markdown")
-        db.update_user_activity(user_id)
+
     except Exception as e:
-        logger.error(f"Error in debug_scheduler: {e}")
-        await update.message.reply_text("❌ Errore nel recupero dello stato dello scheduler")
+        logger.error(f"Errore in debug_scheduler: {str(e)}", exc_info=True)
+        await update.message.reply_text(
+            "❌ Errore nel recupero dello scheduler\n"
+            f"Errore: {str(e)}"
+        )
 
 
 async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):

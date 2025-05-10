@@ -30,9 +30,17 @@ class TelegramBot:
     def __init__(self):
         self.logger = logger.getChild('telegram_bot')
         self.application = None
-        self.scheduler = None
         self._shutdown_event = asyncio.Event()
         self.initialization_complete = False
+        self.scheduler = AsyncIOScheduler(
+            timezone="UTC",
+            job_defaults={
+                'misfire_grace_time': 3600,
+                'coalesce': True,
+                'max_instances': 1
+            }
+        )
+        self.application.scheduler = self.scheduler
 
     async def initialize(self):
         """Inizializza il bot senza avviarlo"""
@@ -191,11 +199,13 @@ async def scheduler_monitor():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Evento di spegnimento di FastAPI"""
     global bot_app
     if bot_app:
-        await bot_app.shutdown()
-
+        logger.info("Inizio shutdown...")
+        try:
+            await asyncio.wait_for(bot_app.shutdown(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.error("Timeout durante lo shutdown")
 
 @app.post("/webhook")
 async def webhook(request: Request):
