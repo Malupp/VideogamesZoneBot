@@ -66,34 +66,32 @@ async def send_news_to_subscribers(bot, category: str, force_update: bool = Fals
 
 
 def setup_periodic_jobs(application, scheduler):
-    """Configura i job con intervalli corretti"""
-    logger.info("🔄 Configurazione job periodici")
+    """Configura i job con intervalli di test e garantisce l'esecuzione continua"""
+    logger.info("🔄 Configurazione job periodici (WEBHOOK MODE)")
 
-    # Rimuovi job esistenti
+    # Rimuovi job esistenti e riparti da zero
     scheduler.remove_all_jobs()
 
-    # Intervalli in secondi (3600 = 1 ora)
     intervals = {
-        'generale': 1800,  # 30 min
-        'tech': 2000,
-        'ps5': 2500,
-        'xbox': 3000,
-        'switch': 3500,
-        'pc': 3800,
+        'generale': {'interval': 1800, 'first_run': True},  # 30 minuti
+        'tech': {'interval': 3600, 'first_run': True},  # 1 ora
+        'ps5': {'interval': 3600, 'first_run': True},
+        'xbox': {'interval': 3600, 'first_run': True},
+        'switch': {'interval': 3600, 'first_run': True},
+        'pc': {'interval': 3600, 'first_run': True},
     }
 
-    for category, interval in intervals.items():
+    for category, config in intervals.items():
         scheduler.add_job(
             send_news_to_subscribers,
             'interval',
-            seconds=interval,
+            seconds=config['interval'],
             args=[application.bot, category],
             id=f'autosend_{category}',
+            next_run_time=datetime.now() if config['first_run'] else None,
             replace_existing=True,
-            misfire_grace_time=3600,
-            next_run_time=datetime.now() + timedelta(seconds=10)  # Prima esecuzione tra 10 secondi
+            misfire_grace_time=3600
         )
-        logger.info(f"Job creato per {category} con intervallo {interval}s")
 
     logger.info(f"✅ Job attivi: {[j.id for j in scheduler.get_jobs()]}")
 

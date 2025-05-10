@@ -3,8 +3,12 @@ from config import TOKEN, Config
 from handlers import commands, auto_send
 import asyncio
 import logging
+import os
+from datetime import datetime, timedelta
 from utils.news_fetcher import news_fetcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi import FastAPI
+import uvicorn
 
 # Configure logging
 logging.basicConfig(
@@ -12,6 +16,13 @@ logging.basicConfig(
     level=getattr(logging, Config.LOG_LEVEL)
 )
 logger = logging.getLogger(__name__)
+
+app = FastAPI()
+
+
+@app.get('/')
+async def health_check():
+    return {"status": "ok", "scheduler": "running"}
 
 
 class TelegramBot:
@@ -21,6 +32,7 @@ class TelegramBot:
         self.scheduler = None
         self._shutdown_event = asyncio.Event()
         self._background_task = None
+        self._keepalive_task = None
 
     async def run(self):
         """Main entry point for the bot"""
@@ -38,7 +50,7 @@ class TelegramBot:
             self.scheduler = AsyncIOScheduler(
                 timezone="UTC",
                 job_defaults={
-                    'misfire_grace_time': 60,
+                    'misfire_grace_time': 3600,
                     'coalesce': True,
                     'max_instances': 1
                 }
@@ -54,52 +66,54 @@ class TelegramBot:
             await self.application.initialize()
             await self.application.start()
 
-            # Get Render assigned URL
+            # Set webhook
             webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
             await self.application.bot.set_webhook(webhook_url)
-
             logger.info(f"Webhook set to: {webhook_url}")
 
             # Start background tasks
             self._background_task = asyncio.create_task(self._background_tasks())
+            self._keepalive_task = asyncio.create_task(self._run_keepalive())
 
             # Wait for shutdown signal
             await self._shutdown_event.wait()
 
         except asyncio.CancelledError:
-            logger.info("Received shutdown signal")
+            logger.info("Received keyboard interrupt, shutting down...")
         except Exception as e:
             logger.critical(f"Bot runtime error: {e}", exc_info=True)
             raise
         finally:
             await self._shutdown()
 
+    async def _run_keepalive(self):
+        """Run FastAPI keepalive server"""
+        config = uvicorn.Config(
+            app,
+            host="0.0.0.0",
+            port=int(os.getenv("PORT", 10000)),
+            log_level="info"
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
+
     async def _on_application_ready(self, app):
         """Configurazione garantita dello scheduler"""
         try:
-            # Inizializza scheduler
-            self.scheduler = AsyncIOScheduler(
-                timezone="UTC",
-                job_defaults={
-                    'misfire_grace_time': 500,
-                    'coalesce': True,
-                    'max_instances': 1
-                }
-            )
-
-            # Configura i job PRIMA di avviare
+            # Configura i job PRIMA di avviare lo scheduler
             auto_send.setup_periodic_jobs(self.application, self.scheduler)
 
-            # Avvia scheduler
+            # Avvia esplicitamente lo scheduler
             self.scheduler.start()
-            logger.info(f"🚀 Scheduler avviato con {len(self.scheduler.get_jobs())} job")
+            logger.info(f"🚀 Scheduler avviato con {len(self.scheduler.get_jobs())} job attivi")
 
-            # Verifica
+            # Forza l'avvio immediato dei job
             for job in self.scheduler.get_jobs():
-                logger.info(f"Job {job.id} - Prossima esecuzione: {job.next_run_time}")
+                job.modify(next_run_time=datetime.now())
+                logger.info(f"Job {job.id} - Prossima esecuzione forzata: {job.next_run_time}")
 
         except Exception as e:
-            logger.critical(f"Errore inizializzazione scheduler: {e}", exc_info=True)
+            logger.critical(f"CRITICAL: Scheduler failed - {e}", exc_info=True)
             raise
 
     async def _background_tasks(self):
@@ -214,7 +228,6 @@ async def main():
     await bot.run()
 
 if __name__ == '__main__':
-    import os
     try:
         # Create a new event loop for the main thread
         loop = asyncio.new_event_loop()
