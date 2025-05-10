@@ -11,6 +11,7 @@ import os
 from datetime import datetime
 from utils.news_fetcher import news_fetcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from database import db
 
 # Configure logging
 logging.basicConfig(
@@ -25,9 +26,6 @@ logger = logging.getLogger(__name__)
 
 # Inizializza FastAPI
 app = FastAPI()
-
-# Variabile globale per l'applicazione
-bot_app = None
 
 
 class TelegramBot:
@@ -248,6 +246,18 @@ async def health_check():
         "active_jobs": jobs,
         "bot_initialized": bot_app.initialization_complete if bot_app else False
     }
+
+@app.get("/status")
+async def status(self):
+    return {
+        "scheduler": bot_app.scheduler.state if bot_app.scheduler else "off",
+        "last_news": {k: len(v) for k,v in news_fetcher.cache.items()},
+        "subscribers": db.Database.get_subscriber_counts(self)
+    }
+
+@app.get("/subscriber_counts")
+async def get_subscriber_counts(self):
+    return db.Database.get_subscriber_counts(self)
 
 
 @app.get("/set_webhook")

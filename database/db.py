@@ -373,3 +373,60 @@ class Database:
         except Exception as e:
             self.logger.error(f"Error getting categories for user {user_id}: {e}")
             return []
+
+    def get_subscriber_counts(self) -> Dict[str, int]:
+        """Restituisce il conteggio degli iscritti per ogni categoria"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Ottieni tutte le categorie distinte
+                cursor.execute("SELECT DISTINCT category FROM subscriptions")
+                categories = [row['category'] for row in cursor.fetchall()]
+
+                # Ottieni il conteggio per ogni categoria
+                counts = {}
+                for category in categories:
+                    cursor.execute(
+                        "SELECT COUNT(*) as count FROM subscriptions WHERE category = ?",
+                        (category,)
+                    )
+                    counts[category] = cursor.fetchone()['count']
+
+                return counts
+
+        except Exception as e:
+            self.logger.error(f"Error getting subscriber counts: {e}")
+            return {}
+
+    def get_total_subscribers(self) -> int:
+        """Restituisce il numero totale di iscritti unici"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(DISTINCT user_id) as count FROM subscriptions")
+                return cursor.fetchone()['count']
+        except Exception as e:
+            self.logger.error(f"Error getting total subscribers: {e}")
+            return 0
+
+    def get_active_subscriber_counts(self, days: int = 30) -> Dict[str, int]:
+        """Restituisce il conteggio degli iscritti attivi per categoria"""
+        try:
+            cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT s.category, COUNT(DISTINCT s.user_id) as count 
+                    FROM subscriptions s
+                    JOIN users u ON s.user_id = u.user_id
+                    WHERE u.last_activity >= ?
+                    GROUP BY s.category
+                """, (cutoff_date,))
+
+                return {row['category']: row['count'] for row in cursor.fetchall()}
+
+        except Exception as e:
+            self.logger.error(f"Error getting active subscriber counts: {e}")
+            return {}
