@@ -434,6 +434,44 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in search command: {e}")
         await update.message.reply_text("Si è verificato un errore nella ricerca.")
 
+async def subscribe_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Versione semplificata e completamente robusta"""
+    try:
+        chat_id = update.effective_chat.id
+        command_logger.info(f"Processing /subscribegroup for {chat_id}")
+
+        if update.effective_chat.type == 'private':
+            await update.message.reply_text("❌ Comando valido solo per gruppi!")
+            return
+
+        categories = ['generale', 'tech', 'ps5', 'xbox', 'switch', 'pc']
+        success = []
+
+        for category in categories:
+            try:
+                if db.add_subscriber(chat_id=chat_id, category=category, frequency='normal'):
+                    success.append(category)
+            except Exception as e:
+                command_logger.warning(f"Category {category} error: {str(e)}")
+                continue
+
+        if success:
+            response = (
+                f"✅ Gruppo iscritto correttamente a {len(success)} categorie!\n\n"
+                f"• {', '.join(success)}\n\n"
+                f"Gli aggiornamenti inizieranno con il prossimo invio automatico."
+            )
+            command_logger.info(f"Gruppo {chat_id} registrato per {len(success)} categorie")
+        else:
+            response = "⚠️ Il gruppo era già iscritto a tutte le categorie"
+            command_logger.info(f"Gruppo {chat_id} già registrato")
+
+        await update.message.reply_text(response)
+
+    except Exception as e:
+        command_logger.critical(f"Fatal error in subscribe_group: {str(e)}", exc_info=True)
+        await update.message.reply_text("⚠️ Si è verificato un errore. Riprova più tardi.")
+
 
 async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Restituisce l'ID della chat"""
