@@ -1,14 +1,16 @@
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
+from telegram import Update
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import uvicorn
 from config import TOKEN, Config
-from handlers import commands, auto_send
+from handlers import commands, auto_send, errors
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from utils.news_fetcher import news_fetcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI
-import uvicorn
 
 # Configure logging
 logging.basicConfig(
@@ -17,12 +19,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Inizializza FastAPI
 app = FastAPI()
 
-
-@app.get('/')
-async def health_check():
-    return {"status": "ok", "scheduler": "running"}
+# Variabile globale per l'applicazione
+bot_app = None
 
 
 class TelegramBot:
@@ -31,22 +32,24 @@ class TelegramBot:
         self.application = None
         self.scheduler = None
         self._shutdown_event = asyncio.Event()
-        self._background_task = None
-        self._keepalive_task = None
+        self.initialization_complete = False
 
-    async def run(self):
-        """Main entry point for the bot"""
-        logger.info("Starting bot initialization")
+    async def initialize(self):
+        """Inizializza il bot senza avviarlo"""
+        if self.initialization_complete:
+            return
+
+        self.logger.info("Inizializzazione bot in corso...")
+
         try:
-            # Initialize application
+            # Inizializza l'applicazione
             self.application = (
                 ApplicationBuilder()
                 .token(TOKEN)
-                .post_init(self._on_application_ready)
                 .build()
             )
 
-            # Initialize scheduler
+            # Inizializza lo scheduler
             self.scheduler = AsyncIOScheduler(
                 timezone="UTC",
                 job_defaults={
@@ -56,84 +59,32 @@ class TelegramBot:
                 }
             )
 
-            # Register handlers
+            # Registra gli handler
             self._register_handlers()
 
-            # Initialize news fetcher
+            # Inizializza news fetcher
             await news_fetcher.initialize()
 
-            # Start the bot with webhook
+            # Inizializza l'applicazione
             await self.application.initialize()
-            await self.application.start()
 
-            # Set webhook
-            webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-            await self.application.bot.set_webhook(webhook_url)
-            logger.info(f"Webhook set to: {webhook_url}")
-
-            # Start background tasks
-            self._background_task = asyncio.create_task(self._background_tasks())
-            self._keepalive_task = asyncio.create_task(self._run_keepalive())
-
-            # Wait for shutdown signal
-            await self._shutdown_event.wait()
-
-        except asyncio.CancelledError:
-            logger.info("Received keyboard interrupt, shutting down...")
-        except Exception as e:
-            logger.critical(f"Bot runtime error: {e}", exc_info=True)
-            raise
-        finally:
-            await self._shutdown()
-
-    async def _run_keepalive(self):
-        """Run FastAPI keepalive server"""
-        config = uvicorn.Config(
-            app,
-            host="0.0.0.0",
-            port=int(os.getenv("PORT", 10000)),
-            log_level="info"
-        )
-        server = uvicorn.Server(config)
-        await server.serve()
-
-    async def _on_application_ready(self, app):
-        """Configurazione garantita dello scheduler"""
-        try:
-            # Configura i job PRIMA di avviare lo scheduler
+            # Configura lo scheduler
             auto_send.setup_periodic_jobs(self.application, self.scheduler)
 
-            # Avvia esplicitamente lo scheduler
-            self.scheduler.start()
-            logger.info(f"🚀 Scheduler avviato con {len(self.scheduler.get_jobs())} job attivi")
+            # Avvia lo scheduler
+            if not self.scheduler.running:
+                self.scheduler.start()
+                self.logger.info(f"🚀 Scheduler avviato con {len(self.scheduler.get_jobs())} job attivi")
 
-            # Forza l'avvio immediato dei job
-            for job in self.scheduler.get_jobs():
-                job.modify(next_run_time=datetime.now())
-                logger.info(f"Job {job.id} - Prossima esecuzione forzata: {job.next_run_time}")
+            self.initialization_complete = True
+            self.logger.info("Inizializzazione bot completata")
 
         except Exception as e:
-            logger.critical(f"CRITICAL: Scheduler failed - {e}", exc_info=True)
+            self.logger.critical(f"Errore inizializzazione bot: {e}", exc_info=True)
             raise
 
-    async def _background_tasks(self):
-        """Task di monitoraggio continuo"""
-        while not self._shutdown_event.is_set():
-            try:
-                active_jobs = self.scheduler.get_jobs()
-                logger.info(f"🔍 Scheduler Status - Jobs: {len(active_jobs)}")
-
-                if not active_jobs:
-                    logger.warning("⚠️ Nessun job attivo! Re-inizializzo...")
-                    auto_send.setup_periodic_jobs(self.application, self.scheduler)
-
-                await asyncio.sleep(60)
-
-            except Exception as e:
-                logger.error(f"Background task error: {e}")
-
     def _register_handlers(self):
-        """Register all command handlers"""
+        """Registra tutti gli handler dei comandi"""
         handlers = [
             CommandHandler('start', commands.start),
             CommandHandler('help', commands.help),
@@ -162,87 +113,170 @@ class TelegramBot:
             CallbackQueryHandler(commands.group_toggle_callback, pattern='^group_toggle:'),
             CallbackQueryHandler(commands.handle_preferences, pattern='^pref_'),
             CallbackQueryHandler(commands.handle_frequency, pattern='^freq_'),
-            CommandHandler('test_auto_send', self._test_auto_send)  # New test command
         ]
 
         for handler in handlers:
             self.application.add_handler(handler)
 
-    async def _test_auto_send(self, update, context):
-        """Test command for auto-send functionality"""
+        # Aggiungi l'error handler
+        self.application.add_error_handler(errors.error_handler)
+
+    async def check_scheduler(self):
+        """Controlla e ripristina lo scheduler se necessario"""
         try:
-            await update.message.reply_text("Starting auto-send test...")
-            result = await auto_send.send_news_to_subscribers(
-                context.bot,
-                'generale',
-                force_update=True
-            )
-            await update.message.reply_text(f"Auto-send test completed. Sent to {result} users.")
+            active_jobs = self.scheduler.get_jobs()
+            self.logger.info(f"🔍 Stato Scheduler - Jobs attivi: {len(active_jobs)}")
+
+            if not active_jobs:
+                self.logger.warning("⚠️ Nessun job attivo! Re-inizializzo...")
+                auto_send.setup_periodic_jobs(self.application, self.scheduler)
+
+                # Forza l'esecuzione immediata per test
+                for job in self.scheduler.get_jobs():
+                    job.modify(next_run_time=datetime.now())
+                    self.logger.info(f"Job {job.id} - Prossima esecuzione forzata: {job.next_run_time}")
+
         except Exception as e:
-            logger.error(f"Auto-send test failed: {e}")
-            await update.message.reply_text(f"Error during test: {e}")
+            self.logger.error(f"Errore verifica scheduler: {e}")
 
-    async def _shutdown(self):
-        """Cleanup tasks and shutdown the bot"""
-        logger.info("Starting shutdown sequence")
+    async def shutdown(self):
+        """Pulisce e spegne il bot"""
+        self.logger.info("Avvio sequenza di spegnimento")
 
         try:
-            # Signal background tasks to stop
+            # Segnala l'arresto
             self._shutdown_event.set()
 
-            # Cancel background task
-            if self._background_task:
-                self._background_task.cancel()
-                try:
-                    await self._background_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    logger.error(f"Error waiting for background task: {e}")
-
-            # Shutdown scheduler if running
+            # Arresta lo scheduler
             if self.scheduler and self.scheduler.running:
-                logger.info("Stopping scheduler")
+                self.logger.info("Arresto scheduler")
                 self.scheduler.shutdown(wait=False)
 
-            # Close news fetcher
-            logger.info("Closing news fetcher")
+            # Chiudi news fetcher
+            self.logger.info("Chiusura news fetcher")
             await news_fetcher.close()
 
-            # Shutdown application if running
-            if self.application and self.application.running:
-                logger.info("Shutting down application")
-                await self.application.updater.stop()
-                await self.application.stop()
+            # Arresta l'applicazione
+            if self.application:
+                self.logger.info("Arresto applicazione")
                 await self.application.shutdown()
 
         except Exception as e:
-            logger.error(f"Shutdown error: {e}")
+            self.logger.error(f"Errore durante lo spegnimento: {e}")
         finally:
-            logger.info("Shutdown completed")
+            self.logger.info("Spegnimento completato")
 
 
-async def main():
-    """Entry point that creates and runs the bot"""
-    bot = TelegramBot()
-    await bot.run()
+# Inizializza il bot come variabile globale
+bot_app = TelegramBot()
 
-if __name__ == '__main__':
+
+@app.on_event("startup")
+async def startup_event():
+    """Evento di avvio di FastAPI"""
+    global bot_app
+    await bot_app.initialize()
+    logger.info("Server FastAPI avviato e bot inizializzato")
+
+    # Avvia un task di background per controllare lo scheduler
+    asyncio.create_task(scheduler_monitor())
+
+
+async def scheduler_monitor():
+    """Monitora lo scheduler in background"""
+    while True:
+        await bot_app.check_scheduler()
+        await asyncio.sleep(300)  # Controlla ogni 5 minuti
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Evento di spegnimento di FastAPI"""
+    global bot_app
+    if bot_app:
+        await bot_app.shutdown()
+
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    """Gestisce gli aggiornamenti webhook di Telegram"""
+    global bot_app
+
     try:
-        # Create a new event loop for the main thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Assicurati che il bot sia inizializzato
+        if not bot_app.initialization_complete:
+            await bot_app.initialize()
 
-        # Run the bot
-        loop.run_until_complete(main())
-    except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt, shutting down...")
+        # Leggi l'aggiornamento JSON
+        update_data = await request.json()
+
+        # Processa l'aggiornamento
+        update = Update.de_json(update_data, bot_app.application.bot)
+        await bot_app.application.process_update(update)
+
+        return JSONResponse(content={"status": "ok"})
     except Exception as e:
-        logger.critical(f"Critical error: {e}", exc_info=True)
-    finally:
-        # Ensure all async resources are closed
-        tasks = asyncio.all_tasks(loop)
-        for task in tasks:
-            task.cancel()
-        loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
-        loop.close()
+        logger.error(f"Errore nel webhook: {e}", exc_info=True)
+        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/")
+async def health_check():
+    """Endpoint per verificare lo stato del bot"""
+    global bot_app
+
+    scheduler_status = "running" if bot_app and bot_app.scheduler and bot_app.scheduler.running else "not running"
+    jobs = len(bot_app.scheduler.get_jobs()) if bot_app and bot_app.scheduler else 0
+
+    return {
+        "status": "ok",
+        "scheduler": scheduler_status,
+        "active_jobs": jobs,
+        "bot_initialized": bot_app.initialization_complete if bot_app else False
+    }
+
+
+@app.get("/set_webhook")
+async def set_webhook():
+    """Imposta manualmente il webhook"""
+    global bot_app
+
+    if not bot_app.initialization_complete:
+        await bot_app.initialize()
+
+    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+    await bot_app.application.bot.set_webhook(webhook_url)
+
+    return {
+        "status": "ok",
+        "webhook_url": webhook_url
+    }
+
+
+@app.get("/force_jobs")
+async def force_jobs():
+    """Forza l'esecuzione di tutti i job schedulati"""
+    global bot_app
+
+    if not bot_app.initialization_complete:
+        await bot_app.initialize()
+
+    job_count = 0
+    for job in bot_app.scheduler.get_jobs():
+        job.modify(next_run_time=datetime.now())
+        job_count += 1
+
+    return {
+        "status": "ok",
+        "forced_jobs": job_count
+    }
+
+
+def run():
+    """Punto di ingresso per l'avvio da riga di comando"""
+    port = int(os.getenv("PORT", 10000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
+
+
+if __name__ == "__main__":
+    run()

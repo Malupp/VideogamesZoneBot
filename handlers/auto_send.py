@@ -20,7 +20,7 @@ last_sent_news: Dict[str, List[Tuple[str, str, str]]] = {}
 
 
 async def send_news_to_subscribers(bot, category: str, force_update: bool = False) -> int:
-    """Versione semplificata e più robusta"""
+    """Versione migliorata e più robusta per l'invio di notizie"""
     try:
         logger.info(f"Inizio invio notizie per {category}")
 
@@ -31,18 +31,45 @@ async def send_news_to_subscribers(bot, category: str, force_update: bool = Fals
             return 0
 
         # Recupera le notizie
-        news = await news_fetcher.get_news(category, limit=5)
-        if not news:
-            logger.info(f"Nessuna notizia trovata per {category}")
+        try:
+            news = await news_fetcher.get_news(category, limit=5)
+            if not news:
+                logger.info(f"Nessuna notizia trovata per {category}")
+                return 0
+        except Exception as e:
+            logger.error(f"Errore nel recupero notizie per {category}: {e}")
             return 0
 
+        # Verifica se le notizie sono già state inviate recentemente (cache)
+        if not force_update and category in last_sent_news:
+            # Confronta titoli per evitare duplicati
+            old_titles = set(item[0] for item in last_sent_news[category])
+            new_titles = set(item[0] for item in news)
+
+            if old_titles == new_titles:
+                logger.info(f"Le stesse notizie per {category} sono già state inviate di recente, salto")
+                return 0
+
+        # Aggiorna la cache
+        last_sent_news[category] = news
+
         # Formatta il messaggio
-        message = f"📰 *Ultime notizie {category.upper()}*\n\n{format_news(news)}"
+        try:
+            message = f"📰 *Ultime notizie {category.upper()}*\n\n{format_news(news)}"
+        except Exception as e:
+            logger.error(f"Errore nella formattazione del messaggio per {category}: {e}")
+            message = f"📰 *Ultime notizie {category.upper()}*\n\n"
+            for i, (title, url, source) in enumerate(news, 1):
+                message += f"{i}. {title} ({source})\n{url}\n\n"
 
         # Invia a tutti gli iscritti
         success_count = 0
+        error_count = 0
         for user_id in subscribers:
             try:
+                # Log dettagliato prima dell'invio
+                logger.debug(f"Invio notizie {category} a utente {user_id}")
+
                 await bot.send_message(
                     chat_id=user_id,
                     text=message,
@@ -50,14 +77,26 @@ async def send_news_to_subscribers(bot, category: str, force_update: bool = Fals
                     disable_web_page_preview=True
                 )
                 success_count += 1
-                await asyncio.sleep(0.1)  # Rate limiting
+                await asyncio.sleep(0.2)  # Rate limiting più rilassato
+
             except (BadRequest, Forbidden) as e:
                 logger.warning(f"Impossibile inviare a {user_id}: {e}")
                 db.unsubscribe(user_id, category)  # Rimuovi iscritti non validi
+                error_count += 1
+
             except Exception as e:
                 logger.error(f"Errore invio a {user_id}: {e}")
+                error_count += 1
+                # Continua con gli altri utenti
+                await asyncio.sleep(1)  # Pausa più lunga in caso di errore
 
-        logger.info(f"Inviate notizie {category} a {success_count}/{len(subscribers)} utenti")
+        # Aggiorna le statistiche nel database
+        try:
+            db.increment_news_sent(success_count)
+        except Exception as e:
+            logger.error(f"Errore nell'aggiornamento delle statistiche: {e}")
+
+        logger.info(f"Inviate notizie {category} a {success_count}/{len(subscribers)} utenti (errori: {error_count})")
         return success_count
 
     except Exception as e:
@@ -66,44 +105,80 @@ async def send_news_to_subscribers(bot, category: str, force_update: bool = Fals
 
 
 def setup_periodic_jobs(application, scheduler):
-    """Configura i job con intervalli di test e garantisce l'esecuzione continua"""
-    logger.info("🔄 Configurazione job periodici (WEBHOOK MODE)")
+    """Configura i job con intervalli più appropriati"""
+    logger.info("🔄 Configurazione job periodici")
 
-    # Rimuovi job esistenti e riparti da zero
+    # Prima rimuovi eventuali job esistenti
     scheduler.remove_all_jobs()
 
+    # Definisci gli intervalli per ogni categoria
     intervals = {
-        'generale': {'interval': 1800, 'first_run': True},  # 30 minuti
-        'tech': {'interval': 3600, 'first_run': True},  # 1 ora
-        'ps5': {'interval': 3600, 'first_run': True},
-        'xbox': {'interval': 3600, 'first_run': True},
-        'switch': {'interval': 3600, 'first_run': True},
-        'pc': {'interval': 3600, 'first_run': True},
+        'generale': {'interval': 1600, 'first_run': True},  # 1 ora
+        'tech': {'interval': 3600, 'first_run': False},  # 2 ore
+        'ps5': {'interval': 3800, 'first_run': False},  # 2 ore
+        'xbox': {'interval': 4000, 'first_run': False},  # 2 ore
+        'switch': {'interval': 4200, 'first_run': False},  # 2 ore
+        'pc': {'interval': 4400, 'first_run': False},  # 2 ore
     }
 
+    # Aggiungi i job con offset per evitare sovraccarichi
+    offset = 0
     for category, config in intervals.items():
+        next_run = datetime.now() + timedelta(seconds=offset) if config['first_run'] else None
+
         scheduler.add_job(
             send_news_to_subscribers,
             'interval',
             seconds=config['interval'],
             args=[application.bot, category],
             id=f'autosend_{category}',
-            next_run_time=datetime.now() if config['first_run'] else None,
+            next_run_time=next_run,
             replace_existing=True,
             misfire_grace_time=3600
         )
 
+        # Aggiungi un offset per distribuire i job
+        offset += 300  # 5 minuti di offset tra i job
+
+    # Aggiungi job di pulizia utenti inattivi (una volta al giorno)
+    scheduler.add_job(
+        cleanup_inactive_users,
+        'interval',
+        days=1,
+        args=[application.bot],
+        id='cleanup_inactive',
+        replace_existing=True
+    )
+
+    # Aggiungi job di reset cache (ogni 12 ore)
+    scheduler.add_job(
+        reset_cache,
+        'interval',
+        hours=12,
+        id='reset_cache',
+        replace_existing=True
+    )
+
     logger.info(f"✅ Job attivi: {[j.id for j in scheduler.get_jobs()]}")
+
 
 async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando di test per verificare l'invio"""
     try:
-        await update.message.reply_text("Avvio test invio notizie...")
+        await update.message.reply_text("⚙️ Avvio test invio notizie...")
+
+        # Log dettagliato
+        logger.info(f"Test invio avviato da utente {update.effective_user.id}")
+
+        # Forza l'invio per la categoria generale
         result = await send_news_to_subscribers(context.bot, 'generale', True)
-        await update.message.reply_text(f"Test completato! Inviato a {result} utenti")
+
+        await update.message.reply_text(f"✅ Test completato! Inviato a {result} utenti")
+        logger.info(f"Test invio completato: {result} messaggi inviati")
+
     except Exception as e:
-        logger.error(f"Errore test_send: {e}")
-        await update.message.reply_text(f"Errore durante il test: {str(e)}")
+        logger.error(f"Errore test_send: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Errore durante il test: {str(e)}")
 
 
 def reset_cache():
@@ -141,6 +216,7 @@ async def cleanup_inactive_users(bot):
 
                 db.mark_for_removal(user_id)
                 removed += 1
+                await asyncio.sleep(0.2)  # Rate limiting
 
             except (Forbidden, BadRequest):
                 db.remove_user(user_id)
@@ -150,7 +226,7 @@ async def cleanup_inactive_users(bot):
             except Exception as e:
                 logger.error(f"Errore durante la pulizia per utente {user_id}: {e}")
 
-        logger.info(f"Pulizia completata, rimossi {removed} utenti inattivi")
+        logger.info(f"Pulizia completata, elaborati {removed} utenti inattivi")
 
     except Exception as e:
         logger.error(f"Errore nella pulizia utenti inattivi: {e}", exc_info=True)
