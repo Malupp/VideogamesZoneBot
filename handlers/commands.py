@@ -565,12 +565,20 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     print("Funzione error_handler chiamata.")
     print(f"Errore: {context.error}")
 
-async def _debug_scheduler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def debug_scheduler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra lo stato dello scheduler"""
     jobs = context.application.scheduler.get_jobs()
-    status = [
-        f"{j.id} - Next: {j.next_run_time} - Last: {j.last_run_time}"
-        for j in jobs
-    ]
-    await update.message.reply_text(
-        "📊 Scheduler Debug:\n" + "\n".join(status)
-    )
+    if not jobs:
+        await update.message.reply_text("⚠️ Nessun job attivo nello scheduler")
+        return
+
+    message = "📊 Stato Scheduler:\n\n"
+    for job in jobs:
+        message += (
+            f"• {job.id}\n"
+            f"  Prossima esecuzione: {job.next_run_time}\n"
+            f"  Intervallo: {job.trigger.interval}\n\n"
+        )
+
+    await update.message.reply_text(message)

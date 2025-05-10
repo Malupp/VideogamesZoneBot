@@ -77,29 +77,29 @@ class TelegramBot:
     async def _on_application_ready(self, app):
         """Configurazione garantita dello scheduler"""
         try:
-            # 1. Inizializza lo scheduler con opzioni robuste
+            # Inizializza scheduler
             self.scheduler = AsyncIOScheduler(
                 timezone="UTC",
                 job_defaults={
-                    'misfire_grace_time': 300,
+                    'misfire_grace_time': 500,
                     'coalesce': True,
                     'max_instances': 1
                 }
             )
 
-            # 2. Configura i job PRIMA di avviare
+            # Configura i job PRIMA di avviare
             auto_send.setup_periodic_jobs(self.application, self.scheduler)
 
-            # 3. Avvio esplicito con controllo
+            # Avvia scheduler
             self.scheduler.start()
-            logger.info(f"🚀 Scheduler avviato con {len(self.scheduler.get_jobs())} job attivi")
+            logger.info(f"🚀 Scheduler avviato con {len(self.scheduler.get_jobs())} job")
 
-            # 4. Verifica iniziale
+            # Verifica
             for job in self.scheduler.get_jobs():
                 logger.info(f"Job {job.id} - Prossima esecuzione: {job.next_run_time}")
 
         except Exception as e:
-            logger.critical(f"CRITICAL: Scheduler failed - {e}", exc_info=True)
+            logger.critical(f"Errore inizializzazione scheduler: {e}", exc_info=True)
             raise
 
     async def _background_tasks(self):
@@ -143,6 +143,7 @@ class TelegramBot:
             CommandHandler('group_start', commands.group_start),
             CommandHandler('group_settings', commands.group_settings),
             CommandHandler('admin_stats', commands.admin_stats),
+            CommandHandler('debug_scheduler', commands.debug_scheduler),
             CommandHandler('test_send', auto_send.test_send),
             CallbackQueryHandler(commands.group_toggle_callback, pattern='^group_toggle:'),
             CallbackQueryHandler(commands.handle_preferences, pattern='^pref_'),

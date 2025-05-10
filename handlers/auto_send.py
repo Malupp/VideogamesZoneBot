@@ -9,7 +9,7 @@ from utils.helpers import format_news
 from database.db import Database
 import logging
 from typing import Dict, List, Tuple, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -66,33 +66,34 @@ async def send_news_to_subscribers(bot, category: str, force_update: bool = Fals
 
 
 def setup_periodic_jobs(application, scheduler):
-    """Configura i job con intervalli di test e garantisce l'esecuzione continua"""
-    logger.info("🔄 Configurazione job periodici (TEST MODE)")
+    """Configura i job con intervalli corretti"""
+    logger.info("🔄 Configurazione job periodici")
 
-    intervals = {
-        'generale': {'interval': 60, 'first_run': True},
-        'tech': {'interval': 120, 'first_run': True},
-        'ps5': {'interval': 120, 'first_run': True},
-        'xbox': {'interval': 120, 'first_run': True},
-        'switch': {'interval': 120, 'first_run': True},
-        'pc': {'interval': 120, 'first_run': True},
-
-    }
-
-    # Rimuovi job esistenti e riparti da zero
+    # Rimuovi job esistenti
     scheduler.remove_all_jobs()
 
-    for category, config in intervals.items():
+    # Intervalli in secondi (3600 = 1 ora)
+    intervals = {
+        'generale': 1800,  # 30 min
+        'tech': 2000,
+        'ps5': 2500,
+        'xbox': 3000,
+        'switch': 3500,
+        'pc': 3800,
+    }
+
+    for category, interval in intervals.items():
         scheduler.add_job(
             send_news_to_subscribers,
             'interval',
-            seconds=config['interval'],
+            seconds=interval,
             args=[application.bot, category],
             id=f'autosend_{category}',
-            next_run_time=datetime.now() if config['first_run'] else None,
-            replace_existing=True,  # <-- ESSENZIALE
-            misfire_grace_time=300
+            replace_existing=True,
+            misfire_grace_time=3600,
+            next_run_time=datetime.now() + timedelta(seconds=10)  # Prima esecuzione tra 10 secondi
         )
+        logger.info(f"Job creato per {category} con intervallo {interval}s")
 
     logger.info(f"✅ Job attivi: {[j.id for j in scheduler.get_jobs()]}")
 
