@@ -15,7 +15,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=getattr(logging, Config.LOG_LEVEL)
+    level=getattr(logging, Config.LOG_LEVEL),
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('bot.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -30,17 +34,9 @@ class TelegramBot:
     def __init__(self):
         self.logger = logger.getChild('telegram_bot')
         self.application = None
+        self.scheduler = None  # Inizializzato qui ma configurato dopo
         self._shutdown_event = asyncio.Event()
         self.initialization_complete = False
-        self.scheduler = AsyncIOScheduler(
-            timezone="UTC",
-            job_defaults={
-                'misfire_grace_time': 3600,
-                'coalesce': True,
-                'max_instances': 1
-            }
-        )
-        self.application.scheduler = self.scheduler
 
     async def initialize(self):
         """Inizializza il bot senza avviarlo"""
@@ -50,14 +46,14 @@ class TelegramBot:
         self.logger.info("Inizializzazione bot in corso...")
 
         try:
-            # Inizializza l'applicazione
+            # 1. Prima inizializza l'applicazione
             self.application = (
                 ApplicationBuilder()
                 .token(TOKEN)
                 .build()
             )
 
-            # Inizializza lo scheduler
+            # 2. Poi configura lo scheduler
             self.scheduler = AsyncIOScheduler(
                 timezone="UTC",
                 job_defaults={
@@ -66,6 +62,9 @@ class TelegramBot:
                     'max_instances': 1
                 }
             )
+
+            # 3. Ora puoi assegnare lo scheduler all'applicazione
+            self.application.scheduler = self.scheduler
 
             # Registra gli handler
             self._register_handlers()
@@ -87,9 +86,12 @@ class TelegramBot:
             self.initialization_complete = True
             self.logger.info("Inizializzazione bot completata")
 
+
         except Exception as e:
             self.logger.critical(f"Errore inizializzazione bot: {e}", exc_info=True)
-            raise
+            # Riavvia dopo un delay
+            await asyncio.sleep(5)
+            await self.initialize()
 
     def _register_handlers(self):
         """Registra tutti gli handler dei comandi"""
@@ -183,11 +185,13 @@ bot_app = TelegramBot()
 async def startup_event():
     """Evento di avvio di FastAPI"""
     global bot_app
-    await bot_app.initialize()
-    logger.info("Server FastAPI avviato e bot inizializzato")
-
-    # Avvia un task di background per controllare lo scheduler
-    asyncio.create_task(scheduler_monitor())
+    try:
+        await bot_app.initialize()
+        logger.info("Server FastAPI avviato e bot inizializzato")
+        asyncio.create_task(scheduler_monitor())
+    except Exception as e:
+        logger.critical(f"Errore durante l'avvio: {e}")
+        raise
 
 
 async def scheduler_monitor():
@@ -288,5 +292,12 @@ def run():
     uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
 
 
+def check_config():
+    required = ['TOKEN', 'ADMIN_IDS']
+    for var in required:
+        if not hasattr(Config, var):
+            raise ValueError(f"Config.{var} mancante nel file config.py")
+
 if __name__ == "__main__":
+    check_config()
     run()

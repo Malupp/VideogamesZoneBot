@@ -627,6 +627,11 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def debug_scheduler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mostra lo stato dello scheduler"""
     try:
+        # Verifica che lo scheduler esista
+        if not hasattr(context.application, 'scheduler') or context.application.scheduler is None:
+            await update.message.reply_text("⚠️ Scheduler non inizializzato")
+            return
+
         # Verifica che l'utente sia admin
         if update.effective_user.id not in config.ADMIN_IDS:
             await update.message.reply_text("❌ Accesso negato")
