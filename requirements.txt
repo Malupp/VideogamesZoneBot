@@ -3,3 +3,4 @@ aiohttp==3.9.5
 APScheduler==3.10.4
 python-dotenv==1.0.1
 feedparser
+httpx~=0.25.2
