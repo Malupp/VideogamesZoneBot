@@ -44,7 +44,10 @@ async def send_news_to_subscribers(bot, category: str, force_update: bool = Fals
             logger.info(f"Nessun iscritto per {category}, skip invio")
             return 0
 
-        logger.info(f"Subscriber IDs: {subscribers[:5]}{'... e altri' if len(subscribers) > 5 else ''}")
+        # Log degli ID dei subscribers in modo sicuro
+        subscriber_ids = list(subscribers.keys())
+        preview_ids = subscriber_ids[:5]
+        logger.info(f"Subscriber IDs: {preview_ids}{'... e altri' if len(subscriber_ids) > 5 else ''}")
 
         # Recupera le notizie
         try:
@@ -81,7 +84,7 @@ async def send_news_to_subscribers(bot, category: str, force_update: bool = Fals
         # Invia a tutti gli iscritti
         success_count = 0
         error_count = 0
-        for user_id in subscribers:
+        for user_id in subscriber_ids:  # Usa la lista di ID invece del dizionario direttamente
             try:
                 # Log dettagliato prima dell'invio
                 logger.debug(f"Invio notizie {category} a utente {user_id}")
@@ -112,7 +115,7 @@ async def send_news_to_subscribers(bot, category: str, force_update: bool = Fals
         except Exception as e:
             logger.error(f"Errore nell'aggiornamento delle statistiche: {e}")
 
-        logger.info(f"Inviate notizie {category} a {success_count}/{len(subscribers)} utenti (errori: {error_count})")
+        logger.info(f"Inviate notizie {category} a {success_count}/{len(subscriber_ids)} utenti (errori: {error_count})")
         return success_count
 
     except Exception as e:
@@ -128,27 +131,44 @@ def setup_periodic_jobs(application, scheduler):
         # Prima rimuovi eventuali job esistenti
         scheduler.remove_all_jobs()
 
-        # Definisci gli intervalli per ogni categoria (in minuti)
+        # Definisci gli intervalli per ogni categoria
+        # Le notizie verranno inviate a questi intervalli:
         intervals = {
-            'generale': {'minutes': 15, 'first_run': True},
-            'tech': {'minutes': 30, 'first_run': True},
-            'ps5': {'minutes': 45, 'first_run': True},
-            'xbox': {'minutes': 45, 'first_run': True},
-            'switch': {'minutes': 45, 'first_run': True},
-            'pc': {'minutes': 45, 'first_run': True},
+            # Notizie generali - 4 volte al giorno (ogni 6 ore)
+            'generale': {'hours': 6, 'first_run': True},
+            
+            # Notizie tech - 2 volte al giorno (ogni 12 ore)
+            'tech': {'hours': 12, 'first_run': True},
+            
+            # Notizie gaming - 1 volta al giorno
+            'ps5': {'hours': 24, 'first_run': True},
+            'xbox': {'hours': 24, 'first_run': True},
+            'switch': {'hours': 24, 'first_run': True},
+            'pc': {'hours': 24, 'first_run': True},
         }
+
+        # Orari approssimativi di invio per categoria:
+        # generale: 00:00, 06:00, 12:00, 18:00
+        # tech: 00:00, 12:00
+        # gaming: una volta al giorno alle 12:00 (con offset di 30 secondi tra categorie)
 
         # Aggiungi i job con offset per evitare sovraccarichi
         offset = 0
         for category, config in intervals.items():
             try:
-                # Forza l'esecuzione iniziale per tutti i job
-                next_run = datetime.now() + timedelta(seconds=offset) if config['first_run'] else None
+                # Calcola il prossimo orario di esecuzione
+                next_run = datetime.now()
+                if config['first_run']:
+                    # Allinea l'orario al prossimo intervallo completo
+                    hours_until_next = config['hours'] - (next_run.hour % config['hours'])
+                    next_run = next_run.replace(minute=0, second=0, microsecond=0) + timedelta(hours=hours_until_next)
+                    # Aggiungi offset per evitare esecuzioni simultanee
+                    next_run += timedelta(seconds=offset)
 
                 job = scheduler.add_job(
                     send_news_to_subscribers,
                     'interval',
-                    minutes=config['minutes'],
+                    hours=config['hours'],
                     args=[application.bot, category, False],
                     id=f'autosend_{category}',
                     next_run_time=next_run,
@@ -157,7 +177,7 @@ def setup_periodic_jobs(application, scheduler):
                 )
                 
                 # Log job configuration
-                logger.info(f"Job {job.id} configurato - Intervallo: {config['minutes']} minuti")
+                logger.info(f"Job {job.id} configurato - Intervallo: {config['hours']} ore - Prossimo invio: {next_run}")
 
                 # Aggiungi un offset per distribuire i job
                 offset += 30  # 30 secondi di offset tra i job
@@ -165,32 +185,42 @@ def setup_periodic_jobs(application, scheduler):
             except Exception as e:
                 logger.error(f"Errore configurazione job per {category}: {e}")
 
-        # Aggiungi job di pulizia utenti inattivi (una volta al giorno)
+        # Aggiungi job di reset cache (ogni 12 ore - 00:00 e 12:00)
         try:
+            next_cache_reset = datetime.now().replace(minute=0, second=0, microsecond=0)
+            hours_until_next = 12 - (next_cache_reset.hour % 12)
+            next_cache_reset += timedelta(hours=hours_until_next)
+            
+            cache_job = scheduler.add_job(
+                reset_cache,
+                'interval',
+                hours=12,
+                id='reset_cache',
+                replace_existing=True,
+                next_run_time=next_cache_reset
+            )
+            logger.info(f"Job reset cache configurato - Prossima esecuzione: {next_cache_reset}")
+        except Exception as e:
+            logger.error(f"Errore configurazione job reset cache: {e}")
+
+        # Aggiungi job di pulizia utenti inattivi (una volta al giorno alle 03:00)
+        try:
+            next_cleanup = datetime.now().replace(hour=3, minute=0, second=0, microsecond=0)
+            if next_cleanup < datetime.now():
+                next_cleanup += timedelta(days=1)
+                
             cleanup_job = scheduler.add_job(
                 cleanup_inactive_users,
                 'interval',
                 hours=24,
                 args=[application.bot],
                 id='cleanup_inactive',
-                replace_existing=True
+                replace_existing=True,
+                next_run_time=next_cleanup
             )
-            logger.info("Job pulizia utenti configurato")
+            logger.info(f"Job pulizia utenti configurato - Prossima esecuzione: {next_cleanup}")
         except Exception as e:
             logger.error(f"Errore configurazione job pulizia: {e}")
-
-        # Aggiungi job di reset cache (ogni 6 ore)
-        try:
-            cache_job = scheduler.add_job(
-                reset_cache,
-                'interval',
-                hours=6,
-                id='reset_cache',
-                replace_existing=True
-            )
-            logger.info("Job reset cache configurato")
-        except Exception as e:
-            logger.error(f"Errore configurazione job reset cache: {e}")
 
         # Configurazione scheduler
         scheduler.configure(
