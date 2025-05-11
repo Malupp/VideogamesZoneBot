@@ -20,8 +20,6 @@ class NewsFetcher:
                 'https://www.everyeye.it/rss/news.xml',
                 'https://www.gamesource.it/feed/gn',
                 'https://www.gametimers.it/feed/',
-                'https://www.spaziogames.it/rss',
-                'https://multiplayer.it/feed/',
                 'https://feeds.hwupgrade.it/rss_hwup.xml',
             ],
             'generale_en': [
@@ -35,11 +33,9 @@ class NewsFetcher:
                 'https://www.techradar.com/uk/feeds/articletype/feature',
                 'https://press-start.xyz/feed/',
                 'https://www.gamespot.com/feeds/mashup/',
-                'https://feeds.feedburner.com/ign/all',
                 'https://feeds.feedburner.com/ign/games-all',
                 'https://www.gamesindustry.biz/feed',
                 'https://www.vg247.com/feed',
-                'https://www.gamespot.com/feeds/mashup',
                 'https://www.polygon.com/rss/index.xml',
                 'https://www.gematsu.com/feed',
                 'https://gamingintel.com/feed/'
@@ -131,27 +127,34 @@ class NewsFetcher:
         await self.ensure_initialized()
 
         now = datetime.now()
-        # Usa cache se disponibile e recente (meno di 10 minuti)
+        # Use cache if available and recent (less than 10 minutes)
         if url in self.cache and now - self.last_fetch.get(url, datetime.min) < timedelta(minutes=10):
             print(f"[DEBUG] Using cached version of {url}")
             return self.cache[url]
 
         try:
-            # Timeout e gestione errori migliorata
+            # Improved error handling and timeout
             async with self.session.get(url, timeout=10, raise_for_status=True) as response:
                 # Use bytes to avoid UnicodeDecodeError
                 content = await response.read()
                 feed = feedparser.parse(content)
 
-                # Verifica se il feed è valido
-                if not hasattr(feed, 'entries') or len(feed.entries) == 0:
+                # Validate feed structure and content
+                if not hasattr(feed, 'entries') or not feed.entries:
                     logger.warning(f"Feed {url} returned no entries or is invalid")
                     print(f"[WARNING] Feed {url} returned no entries or is invalid")
                     return feedparser.FeedParserDict({'entries': []})
 
+                # Validate entries have required fields
+                valid_entries = []
+                for entry in feed.entries:
+                    if hasattr(entry, 'title') and hasattr(entry, 'link'):
+                        valid_entries.append(entry)
+
+                feed.entries = valid_entries
                 self.cache[url] = feed
                 self.last_fetch[url] = now
-                print(f"[DEBUG] Successfully fetched {url}, found {len(feed.entries)} entries")
+                print(f"[DEBUG] Successfully fetched {url}, found {len(feed.entries)} valid entries")
                 return feed
 
         except aiohttp.ClientResponseError as e:

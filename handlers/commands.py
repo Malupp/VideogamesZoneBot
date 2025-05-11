@@ -150,9 +150,9 @@ async def handle_news_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         news_list = await news_fetcher.get_news(category, limit=prefs['limit'])
         if news_list:
             msg = "\n\n".join([
-                f"*{i+1}\. {escape_markdown(title, version=2)}*\n" +
-                f"[{escape_markdown(source, version=2)}]({escape_markdown(link, version=2)}) | " +
-                f"{escape_markdown(date, version=2)} | {escape_markdown(lang.upper(), version=2)}"
+                f"*{i+1}\\. {escape_markdown(title, version=2)}*\n"
+                f"[{escape_markdown(source, version=2)}]({escape_markdown(link, version=2)}) \\| "
+                f"{escape_markdown(date, version=2)} \\| {escape_markdown(lang.upper(), version=2)}"
                 for i, (title, link, source, date, lang) in enumerate(news_list)
             ])
             await query.edit_message_text(msg, parse_mode="MarkdownV2", disable_web_page_preview=True)
@@ -409,22 +409,22 @@ async def news_5(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def news_10(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ultime 10 notizie"""
+    """Mostra le ultime 10 notizie"""
     try:
         news_list = await news_fetcher.get_news('generale', limit=10)
         if news_list:
-            msg = f"📰 *Ultime 10 notizie*\n\n{format_news(news_list)}"
-            await update.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            db.update_user_activity(update.effective_user.id)
+            msg = "\n\n".join([
+                f"*{i+1}\\. {escape_markdown(title, version=2)}*\n"
+                f"[{escape_markdown(source, version=2)}]({escape_markdown(link, version=2)}) \\| "
+                f"{escape_markdown(date, version=2)} \\| {escape_markdown(lang.upper(), version=2)}"
+                for i, (title, link, source, date, lang) in enumerate(news_list)
+            ])
+            await update.message.reply_text(msg, parse_mode="MarkdownV2", disable_web_page_preview=True)
         else:
             await update.message.reply_text("Nessuna notizia trovata.")
     except Exception as e:
         logger.error(f"Error in news_10 command: {e}")
-        await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
+        await update.message.reply_text("Errore nel recupero delle notizie.")
 
 
 LAST_NEWS = {}
