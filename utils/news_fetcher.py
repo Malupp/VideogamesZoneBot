@@ -13,16 +13,20 @@ logger = logging.getLogger(__name__)
 
 class NewsFetcher:
     def __init__(self):
+        # Separate Italian and English feeds
         self.RSS_FEEDS = {
-            'generale': [
+            'generale_it': [
                 'https://it.ign.com/feed.xml',
                 'https://www.everyeye.it/rss/news.xml',
                 'https://www.gamesource.it/feed/gn',
                 'https://www.gametimers.it/feed/',
                 'https://www.spaziogames.it/rss',
                 'https://multiplayer.it/feed/',
+                'https://feeds.hwupgrade.it/rss_hwup.xml',
+            ],
+            'generale_en': [
                 'https://www.eurogamer.net/feed',
-                'https://www.eurogamer.net/feed/features'
+                'https://www.eurogamer.net/feed/features',
                 'https://kotaku.com/rss',
                 'https://www.gameinformer.com/news.xml',
                 'https://www.rockpapershotgun.com/feed/features',
@@ -33,14 +37,12 @@ class NewsFetcher:
                 'https://www.gamespot.com/feeds/mashup/',
                 'https://feeds.feedburner.com/ign/all',
                 'https://feeds.feedburner.com/ign/games-all',
-                'https://feeds.hwupgrade.it/rss_hwup.xml',
                 'https://www.gamesindustry.biz/feed',
                 'https://www.vg247.com/feed',
                 'https://www.gamespot.com/feeds/mashup',
                 'https://www.polygon.com/rss/index.xml',
                 'https://www.gematsu.com/feed',
                 'https://gamingintel.com/feed/'
-
             ],
             'ps5': [
                 'https://www.everyeye.it/rss/playstation.xml',
@@ -165,43 +167,47 @@ class NewsFetcher:
             return feedparser.FeedParserDict({'entries': []})
 
     async def get_news(self, category: str = 'generale', limit: int = 5, keywords: Optional[List[str]] = None) -> List[
-        Tuple[str, str, str]]:
-        """Get news from multiple sources with optional keyword filtering"""
+        Tuple[str, str, str, str, str]]:
+        """Get news from multiple sources with optional keyword filtering. Returns (title, link, source, date, language)"""
         print(f"[DEBUG] Getting news for category: {category}, limit: {limit}")
 
         try:
-            # Assicurati che la sessione sia inizializzata
             await self.ensure_initialized()
 
-            urls = self.RSS_FEEDS.get(category.lower(), [])
+            # Support for new language-based categories
+            if category.lower() == 'generale':
+                urls = self.RSS_FEEDS.get('generale_it', []) + self.RSS_FEEDS.get('generale_en', [])
+            else:
+                urls = self.RSS_FEEDS.get(category.lower(), [])
+
             if not urls:
                 logger.warning(f"No URLs found for category: {category}")
                 print(f"[WARNING] No URLs found for category: {category}")
-
-                # Fallback a generale se la categoria non esiste
                 if category.lower() != 'generale':
                     print(f"[INFO] Falling back to 'generale' category")
-                    urls = self.RSS_FEEDS.get('generale', [])
-
-                # Se ancora non ci sono URL, ritorna lista vuota
+                    urls = self.RSS_FEEDS.get('generale_it', []) + self.RSS_FEEDS.get('generale_en', [])
                 if not urls:
                     return []
 
-            # Fetching parallelo dei feed
             tasks = [self.fetch_feed(url) for url in urls]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             all_entries = []
             for i, (result, url) in enumerate(zip(results, urls)):
-                # Salta i feed con errori
                 if isinstance(result, Exception):
                     logger.error(f"Error processing feed {url}: {result}")
                     print(f"[ERROR] Failed to process feed {url}: {result}")
                     continue
 
                 domain = urlparse(url).netloc.replace('www.', '').split('.')[0].capitalize()
+                # Infer language from category or url
+                if url in self.RSS_FEEDS.get('generale_it', []):
+                    lang = 'it'
+                elif url in self.RSS_FEEDS.get('generale_en', []):
+                    lang = 'en'
+                else:
+                    lang = 'unknown'
 
-                # Gestisci il caso in cui 'entries' non esista
                 entries = getattr(result, 'entries', [])
                 if not entries:
                     print(f"[WARNING] No entries found in feed {url}")
@@ -211,42 +217,45 @@ class NewsFetcher:
                     try:
                         title = getattr(entry, 'title', 'Titolo non disponibile')
                         link = getattr(entry, 'link', '')
-
-                        # Salta se non c'è un link valido
                         if not link:
                             continue
-
-                        # Cerca di estrarre la data di pubblicazione
                         published = None
                         if hasattr(entry, 'published_parsed') and entry.published_parsed:
                             published = entry.published_parsed
                         elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
                             published = entry.updated_parsed
-
-                        # Verifica filtro keywords se presenti
+                        # Format date for display
+                        if published:
+                            date_str = datetime(*published[:6]).strftime('%Y-%m-%d %H:%M')
+                        else:
+                            date_str = 'N/A'
                         if keywords and not any(kw.lower() in title.lower() for kw in keywords):
                             continue
-
-                        all_entries.append((title, link, domain, published))
+                        all_entries.append((title, link, domain, date_str, lang))
                     except Exception as e:
                         logger.error(f"Error processing entry in {url}: {e}")
                         print(f"[ERROR] Error processing entry: {e}")
                         continue
 
-            # Ordina per data se disponibile, altrimenti mantieni l'ordine originale
-            all_entries.sort(key=lambda x: x[3] or (0,), reverse=True)
+            # Sort by date if available
+            def sort_key(x):
+                try:
+                    return datetime.strptime(x[3], '%Y-%m-%d %H:%M')
+                except Exception:
+                    return datetime.min
+            all_entries.sort(key=sort_key, reverse=True)
 
-            # Rimuovi duplicati mantenendo l'ordine
+            # Remove duplicates
             unique_entries = []
             seen = set()
             for entry in all_entries:
-                if entry[1] not in seen:  # Usa l'URL come chiave per i duplicati
+                if entry[1] not in seen:
                     seen.add(entry[1])
-                    unique_entries.append(entry[:3])  # Salva solo titolo, link, fonte
+                    unique_entries.append(entry)
                     if len(unique_entries) >= limit:
                         break
 
-            print(f"[DEBUG] Returning {len(unique_entries)} news items")
+            print(f"[DEBUG] Returning {len(unique_entries)} news items (with language and date)")
             return unique_entries
 
         except Exception as e:
@@ -340,7 +349,7 @@ news_fetcher = NewsFetcher()
 
 # Funzioni globali di compatibilità
 async def get_news(category: str = 'generale', limit: int = 5, keywords: Optional[List[str]] = None):
-    """Wrapper per compatibilità"""
+    """Wrapper per compatibilità. Returns (title, link, source, date, language)"""
     return await news_fetcher.get_news(category=category, limit=limit, keywords=keywords)
 
 

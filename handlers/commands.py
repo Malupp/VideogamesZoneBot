@@ -77,26 +77,83 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gestisce il comando /news"""
+    """Mostra un menu per scegliere lingua, categoria e numero di notizie"""
     try:
-        category = context.args[0].lower() if context.args else 'generale'
-        logger.info(f"Fetching news for category: {category}")
-
-        news_list = await news_fetcher.get_news(category)
-
-        if news_list:
-            msg = f"📰 *Ultime notizie {category.upper()}*\n\n{format_news(news_list)}"
-            await update.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            db.update_user_activity(update.effective_user.id)
-        else:
-            await update.message.reply_text("Nessuna notizia trovata per questa categoria.")
+        keyboard = [
+            [InlineKeyboardButton("🇮🇹 Italiano", callback_data='news_lang_it'),
+             InlineKeyboardButton("🇬🇧 English", callback_data='news_lang_en'),
+             InlineKeyboardButton("🌍 Tutte", callback_data='news_lang_all')],
+            [InlineKeyboardButton("🎮 Generale", callback_data='news_cat_generale'),
+             InlineKeyboardButton("🕹️ PS5", callback_data='news_cat_ps5'),
+             InlineKeyboardButton("🟩 Xbox", callback_data='news_cat_xbox')],
+            [InlineKeyboardButton("🔴 Switch", callback_data='news_cat_switch'),
+             InlineKeyboardButton("💻 PC", callback_data='news_cat_pc'),
+             InlineKeyboardButton("📱 Tech", callback_data='news_cat_tech')],
+            [InlineKeyboardButton("🧠 IA", callback_data='news_cat_ia'),
+             InlineKeyboardButton("₿ Crypto", callback_data='news_cat_cripto')],
+            [InlineKeyboardButton("5 Notizie", callback_data='news_limit_5'),
+             InlineKeyboardButton("10 Notizie", callback_data='news_limit_10'),
+             InlineKeyboardButton("20 Notizie", callback_data='news_limit_20')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            '📰 *Scegli lingua, categoria e numero di notizie da visualizzare*:',
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
     except Exception as e:
         logger.error(f"Error in news command: {e}")
         await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
+
+
+# State for user news preferences (in-memory, for demo)
+USER_NEWS_PREFS = {}
+
+
+async def handle_news_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestisce la selezione di lingua/categoria/limite per le news"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    data = query.data
+
+    # Get or set default user prefs
+    prefs = USER_NEWS_PREFS.get(user_id, {'lang': 'all', 'cat': 'generale', 'limit': 5})
+
+    if data.startswith('news_lang_'):
+        lang = data.split('_')[-1]
+        prefs['lang'] = lang
+    elif data.startswith('news_cat_'):
+        cat = data.split('_')[-1]
+        prefs['cat'] = cat
+    elif data.startswith('news_limit_'):
+        limit = int(data.split('_')[-1])
+        prefs['limit'] = limit
+
+    USER_NEWS_PREFS[user_id] = prefs
+
+    # Compose category for fetcher
+    if prefs['cat'] == 'generale':
+        if prefs['lang'] == 'it':
+            category = 'generale_it'
+        elif prefs['lang'] == 'en':
+            category = 'generale_en'
+        else:
+            category = 'generale'
+    else:
+        category = prefs['cat']
+
+    # Fetch news
+    news_list = await news_fetcher.get_news(category, limit=prefs['limit'])
+    if news_list:
+        msg = "\n\n".join([
+            f"*{i+1}. {title}*\n[{source}]({link}) | {date} | {lang.upper()}"
+            for i, (title, link, source, date, lang) in enumerate(news_list)
+        ])
+        await query.edit_message_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
+    else:
+        await query.edit_message_text("Nessuna notizia trovata per questa selezione.")
 
 
 async def preferenze(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -874,3 +931,43 @@ async def daily_digest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in daily_digest command: {e}")
         await update.message.reply_text("Si è verificato un errore nell'invio del digest giornaliero.")
+
+
+async def lingua(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Permette di scegliere la lingua preferita per le news"""
+    keyboard = [
+        [InlineKeyboardButton("🇮🇹 Italiano", callback_data='set_lang_it'),
+         InlineKeyboardButton("🇬🇧 English", callback_data='set_lang_en'),
+         InlineKeyboardButton("🌍 Tutte", callback_data='set_lang_all')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        '🌐 *Scegli la lingua preferita per le notizie*:',
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+
+async def handle_set_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data
+    lang = data.split('_')[-1]
+    # Save to user prefs (in-memory for demo)
+    prefs = USER_NEWS_PREFS.get(user_id, {'lang': 'all', 'cat': 'generale', 'limit': 5})
+    prefs['lang'] = lang
+    USER_NEWS_PREFS[user_id] = prefs
+    await query.edit_message_text(f"Lingua preferita impostata su: {lang.upper()}")
+
+async def becomeadmin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Permette di aggiungere il proprio user ID agli admin del bot (solo in chat privata)"""
+    user = update.effective_user
+    chat = update.effective_chat
+    if chat.type != 'private':
+        await update.message.reply_text("❌ Questo comando può essere usato solo in chat privata per motivi di sicurezza.")
+        return
+    if user.id in c.Config.ADMIN_IDS:
+        await update.message.reply_text(f"✅ Sei già admin del bot! Il tuo user ID è: `{user.id}`", parse_mode="Markdown")
+        return
+    c.Config.ADMIN_IDS.append(user.id)
+    await update.message.reply_text(f"✅ Ora sei admin del bot! Il tuo user ID è: `{user.id}`\n\n*Nota:* questa modifica è temporanea e verrà persa al riavvio del bot. Per renderla permanente, aggiungi manualmente il tuo user ID in .env o config.py.", parse_mode="Markdown")

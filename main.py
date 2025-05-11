@@ -101,6 +101,7 @@ class TelegramBot:
             CommandHandler('start', commands.start),
             CommandHandler('help', commands.help),
             CommandHandler('news', commands.news),
+            CommandHandler('lingua', commands.lingua),  # NEW
             CommandHandler('sommario', commands.sommario),
             CommandHandler('dettaglio', commands.dettaglio),
             CommandHandler('preferenze', commands.preferenze),
@@ -131,11 +132,14 @@ class TelegramBot:
             CommandHandler('debug_scheduler', commands.debug_scheduler),
             CommandHandler('test_send', auto_send.test_send),
             CommandHandler('debug_db', commands.debug_database),
+            CommandHandler('becomeadmin', commands.becomeadmin),  # NEW
             # Callbacks
             CallbackQueryHandler(commands.group_toggle_callback, pattern='^group_toggle:'),
             CallbackQueryHandler(commands.handle_preferences, pattern='^pref_'),
             CallbackQueryHandler(commands.handle_frequency, pattern='^freq_'),
             CallbackQueryHandler(commands.handle_filter_callback, pattern='^filter_'),
+            CallbackQueryHandler(commands.handle_news_buttons, pattern='^news_'),  # NEW
+            CallbackQueryHandler(commands.handle_set_lang, pattern='^set_lang_'),  # NEW
         ]
 
         for handler in handlers:
