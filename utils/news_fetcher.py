@@ -20,22 +20,45 @@ class NewsFetcher:
                 'https://www.gamesource.it/feed/gn',
                 'https://www.gametimers.it/feed/',
                 'https://www.spaziogames.it/rss',
-                'https://multiplayer.it/feed/'
+                'https://multiplayer.it/feed/',
+                'https://www.eurogamer.net/feed',
+                'https://www.eurogamer.net/feed/features'
+                'https://kotaku.com/rss',
+                'https://www.gameinformer.com/news.xml',
+                'https://www.rockpapershotgun.com/feed/features',
+                'https://www.timeextension.com/feeds/articles/tags/Features',
+                'https://www.thegamer.com/feed/category/tg-originals/',
+                'https://www.techradar.com/uk/feeds/articletype/feature',
+                'https://press-start.xyz/feed/',
+                'https://www.gamespot.com/feeds/mashup/',
+                'https://feeds.feedburner.com/ign/all',
+                'https://feeds.feedburner.com/ign/games-all',
+                'https://feeds.hwupgrade.it/rss_hwup.xml',
+                'https://www.gamesindustry.biz/feed',
+                'https://www.vg247.com/feed',
+                'https://www.gamespot.com/feeds/mashup',
+                'https://www.polygon.com/rss/index.xml',
+                'https://www.gematsu.com/feed',
+                'https://gamingintel.com/feed/'
+
             ],
             'ps5': [
                 'https://www.everyeye.it/rss/playstation.xml',
                 'https://it.ign.com/feed/ps5',
-                'https://www.mondoxbox.com/feed/'
+                'https://www.mondoxbox.com/feed/',
+                'https://blog.playstation.com/feed/'
             ],
             'xbox': [
                 'https://www.everyeye.it/rss/xbox.xml',
                 'https://it.ign.com/feed/xbox-series-x',
-                'https://www.mondoxbox.com/feed/'
+                'https://www.mondoxbox.com/feed/',
+                'https://news.xbox.com/en-us/feed/'
             ],
             'pc': [
                 'https://www.everyeye.it/rss/pc.xml',
                 'https://it.ign.com/feed/pc',
-                'https://www.pcgamer.com/rss/'
+                'https://www.pcgamer.com/rss/',
+                'https://www.pcgamesn.com/mainrss.xml'
             ],
             'switch': [
                 'https://www.everyeye.it/rss/nintendo.xml',
@@ -44,7 +67,24 @@ class NewsFetcher:
             ],
             'tech': [
                 'https://www.hwupgrade.it/feed/',
-                'https://www.tomshw.it/feed/'
+                'https://www.tomshw.it/feed/',
+                'https://www.polygon.com/rss/features/index.xml',
+                'https://feeds.arstechnica.com/arstechnica/features',
+                'https://tftcentral.co.uk/category/articles/feed',
+                'https://feeds.feedburner.com/techspot/reviews',
+                'https://feeds.feedburner.com/ign/tech-articles'
+            ],
+            'movies': [
+                'https://www.everyeye.it/rss/cinema.xml',
+                'https://it.ign.com/feed/film',
+                'https://www.cinemablend.com/rss/news',
+                'https://www.cinematographe.it/feed/',
+                'https://www.film.it/rss/',
+                'https://www.filmfestivals.com/blogs/feed',
+                'https://www.filmfreakcentral.net/ffc/feed/',
+                'https://feeds.feedburner.com/ign/movies-articles',
+                'https://www.theverge.com/movies/rss/index.xml',
+                'https://www.theverge.com/rss/tag/movies/index.xml',
             ],
             'ia': [
                 'https://www.ai4business.it/feed/',
