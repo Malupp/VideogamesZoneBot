@@ -139,13 +139,14 @@ class NewsFetcher:
         try:
             # Timeout e gestione errori migliorata
             async with self.session.get(url, timeout=10, raise_for_status=True) as response:
-                text = await response.text()
-                feed = feedparser.parse(text)
+                # Use bytes to avoid UnicodeDecodeError
+                content = await response.read()
+                feed = feedparser.parse(content)
 
                 # Verifica se il feed è valido
                 if not hasattr(feed, 'entries') or len(feed.entries) == 0:
-                    logger.warning(f"Feed {url} returned no entries")
-                    print(f"[WARNING] Feed {url} returned no entries")
+                    logger.warning(f"Feed {url} returned no entries or is invalid")
+                    print(f"[WARNING] Feed {url} returned no entries or is invalid")
                     return feedparser.FeedParserDict({'entries': []})
 
                 self.cache[url] = feed
@@ -153,6 +154,10 @@ class NewsFetcher:
                 print(f"[DEBUG] Successfully fetched {url}, found {len(feed.entries)} entries")
                 return feed
 
+        except aiohttp.ClientResponseError as e:
+            logger.error(f"HTTP error fetching {url}: {e.status} {e.message}")
+            print(f"[ERROR] HTTP error fetching {url}: {e.status} {e.message}")
+            return feedparser.FeedParserDict({'entries': []})
         except aiohttp.ClientError as e:
             logger.error(f"HTTP error fetching {url}: {e}")
             print(f"[ERROR] HTTP error fetching {url}: {e}")

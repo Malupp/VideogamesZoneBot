@@ -9,6 +9,7 @@ from database.db import Database
 from datetime import datetime, timedelta
 import logging
 import json
+from telegram.helpers import escape_markdown
 
 command_logger = logger.getChild('commands')
 db = Database()
@@ -80,17 +81,17 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mostra un menu per scegliere lingua, categoria e numero di notizie"""
     try:
         keyboard = [
-            [InlineKeyboardButton("🇮🇹 Italiano", callback_data='news_lang_it'),
-             InlineKeyboardButton("🇬🇧 English", callback_data='news_lang_en'),
-             InlineKeyboardButton("🌍 Tutte", callback_data='news_lang_all')],
-            [InlineKeyboardButton("🎮 Generale", callback_data='news_cat_generale'),
-             InlineKeyboardButton("🕹️ PS5", callback_data='news_cat_ps5'),
-             InlineKeyboardButton("🟩 Xbox", callback_data='news_cat_xbox')],
-            [InlineKeyboardButton("🔴 Switch", callback_data='news_cat_switch'),
-             InlineKeyboardButton("💻 PC", callback_data='news_cat_pc'),
-             InlineKeyboardButton("📱 Tech", callback_data='news_cat_tech')],
-            [InlineKeyboardButton("🧠 IA", callback_data='news_cat_ia'),
-             InlineKeyboardButton("₿ Crypto", callback_data='news_cat_cripto')],
+            [InlineKeyboardButton("\ud83c\uddee\ud83c\uddf9 Italiano", callback_data='news_lang_it'),
+             InlineKeyboardButton("\ud83c\uddec\ud83c\udde7 English", callback_data='news_lang_en'),
+             InlineKeyboardButton("\ud83c\udf0d Tutte", callback_data='news_lang_all')],
+            [InlineKeyboardButton("\ud83c\udfae Generale", callback_data='news_cat_generale'),
+             InlineKeyboardButton("\ud83d\udd79\ufe0f PS5", callback_data='news_cat_ps5'),
+             InlineKeyboardButton("\ud83d\udfe9 Xbox", callback_data='news_cat_xbox')],
+            [InlineKeyboardButton("\ud83d\udfe5 Switch", callback_data='news_cat_switch'),
+             InlineKeyboardButton("\ud83d\udcbb PC", callback_data='news_cat_pc'),
+             InlineKeyboardButton("\ud83d\udcf1 Tech", callback_data='news_cat_tech')],
+            [InlineKeyboardButton("\ud83e\udde0 IA", callback_data='news_cat_ia'),
+             InlineKeyboardButton("\u20bf Crypto", callback_data='news_cat_cripto')],
             [InlineKeyboardButton("5 Notizie", callback_data='news_limit_5'),
              InlineKeyboardButton("10 Notizie", callback_data='news_limit_10'),
              InlineKeyboardButton("20 Notizie", callback_data='news_limit_20')],
@@ -99,7 +100,7 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             '📰 *Scegli lingua, categoria e numero di notizie da visualizzare*:',
             reply_markup=reply_markup,
-            parse_mode="Markdown"
+            parse_mode="MarkdownV2"
         )
     except Exception as e:
         logger.error(f"Error in news command: {e}")
@@ -145,15 +146,21 @@ async def handle_news_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         category = prefs['cat']
 
     # Fetch news
-    news_list = await news_fetcher.get_news(category, limit=prefs['limit'])
-    if news_list:
-        msg = "\n\n".join([
-            f"*{i+1}. {title}*\n[{source}]({link}) | {date} | {lang.upper()}"
-            for i, (title, link, source, date, lang) in enumerate(news_list)
-        ])
-        await query.edit_message_text(msg, parse_mode="Markdown", disable_web_page_preview=True)
-    else:
-        await query.edit_message_text("Nessuna notizia trovata per questa selezione.")
+    try:
+        news_list = await news_fetcher.get_news(category, limit=prefs['limit'])
+        if news_list:
+            msg = "\n\n".join([
+                f"*{i+1}\. {escape_markdown(title, version=2)}*\n" +
+                f"[{escape_markdown(source, version=2)}]({escape_markdown(link, version=2)}) | " +
+                f"{escape_markdown(date, version=2)} | {escape_markdown(lang.upper(), version=2)}"
+                for i, (title, link, source, date, lang) in enumerate(news_list)
+            ])
+            await query.edit_message_text(msg, parse_mode="MarkdownV2", disable_web_page_preview=True)
+        else:
+            await query.edit_message_text("Nessuna notizia trovata per questa selezione.")
+    except Exception as e:
+        logger.error(f"Error in handle_news_buttons: {e}")
+        await query.edit_message_text("Errore nel recupero delle notizie o nella formattazione del messaggio.")
 
 
 async def preferenze(update: Update, context: ContextTypes.DEFAULT_TYPE):

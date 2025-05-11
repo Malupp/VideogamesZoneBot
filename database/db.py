@@ -413,7 +413,7 @@ class Database:
     def get_active_subscriber_counts(self, days: int = 30) -> Dict[str, int]:
         """Restituisce il conteggio degli iscritti attivi per categoria"""
         try:
-            cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+            cutoff_date = (datetime.now() - timedelta(days=30)).isoformat()
 
             with self._get_connection() as conn:
                 cursor = conn.cursor()
@@ -430,3 +430,7 @@ class Database:
         except Exception as e:
             self.logger.error(f"Error getting active subscriber counts: {e}")
             return {}
+
+    def get_user_count(self) -> int:
+        """Compatibilità: restituisce il numero totale di utenti unici iscritti."""
+        return self.get_total_subscribers()
