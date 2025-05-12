@@ -13,7 +13,7 @@ from utils.news_fetcher import news_fetcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import db
 
-# Configure logging
+# Configure loggingg
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=getattr(logging, Config.LOG_LEVEL),
