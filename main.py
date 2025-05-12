@@ -35,12 +35,17 @@ app = FastAPI()
 
 class TelegramBot:
     def __init__(self):
-        self.post_init = None
+        self.post_init = self._post_init  # Assegna il metodo post_init
         self.logger = logger.getChild('telegram_bot')
         self.application = None
-        self.scheduler = None  # Inizializzato qui ma configurato dopo
+        self.scheduler = None
         self._shutdown_event = asyncio.Event()
         self.initialization_complete = False
+
+    async def _post_init(self, application):
+        """Callback dopo l'inizializzazione dell'Application"""
+        self.application = application
+        self.logger.info("Application initialized in post_init")
 
     async def initialize(self):
         """Versione corretta del metodo initialize"""
@@ -53,24 +58,30 @@ class TelegramBot:
                 # 1. Inizializza news_fetcher
                 await news_fetcher.initialize()
 
-                # 2. Crea l'applicazione Telegram
+                # 2. Crea l'applicazione Telegram con post_init
                 self.application = (
                     ApplicationBuilder()
                     .token(TOKEN)
-                    .post_init(self.post_init)  # Ora il metodo esiste
+                    .post_init(self.post_init)
                     .build()
                 )
 
                 # 3. Configura scheduler
                 self.scheduler = AsyncIOScheduler(timezone="UTC")
                 self.scheduler.start()
-                self.application.scheduler = self.scheduler
+
+                # Assegna lo scheduler all'application
+                if self.application:
+                    self.application.scheduler = self.scheduler
 
                 # 4. Registra handlers
                 self._register_handlers()
 
                 # 5. Configura job periodici
                 auto_send.setup_periodic_jobs(self.application, self.scheduler)
+
+                # 6. Inizializza l'application
+                await self.application.initialize()  # AGGIUNTA CRUCIALE
 
                 self.initialization_complete = True
                 logger.info("✅ Bot inizializzato correttamente")
@@ -240,13 +251,25 @@ async def shutdown_event():
         except asyncio.TimeoutError:
             logger.error("Timeout durante lo shutdown")
 
+@app.get("/init_bot")
+async def init_bot():
+    """Endpoint per forzare l'inizializzazione"""
+    global bot_app
+    try:
+        if not bot_app.initialization_complete:
+            await bot_app.initialize()
+            return {"status": "initialized"}
+        return {"status": "already_initialized"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.post("/webhook")
 async def webhook(request: Request):
     """Gestisce gli aggiornamenti webhook di Telegram"""
     global bot_app
     try:
-        if not bot_app.initialization_complete:
+        if not bot_app.initialization_complete or not bot_app.application:
+            logger.error("Bot non inizializzato quando arrivato webhook")
             return JSONResponse(
                 content={"status": "error", "message": "Bot not initialized"},
                 status_code=503
@@ -254,8 +277,12 @@ async def webhook(request: Request):
 
         update_data = await request.json()
         update = Update.de_json(update_data, bot_app.application.bot)
-        await bot_app.application.process_update(update)
 
+        # Verifica ulteriore che l'application sia pronta
+        if not bot_app.application.updater:
+            await bot_app.application.initialize()
+
+        await bot_app.application.process_update(update)
         return {"status": "ok"}
 
     except Exception as e:
