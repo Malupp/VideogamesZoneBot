@@ -1,5 +1,6 @@
 import asyncio
 
+from apscheduler.schedulers import SchedulerAlreadyRunningError
 from telegram import Update
 from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
@@ -124,128 +125,71 @@ async def send_news_to_subscribers(bot, category: str, force_update: bool = Fals
 
 
 def setup_periodic_jobs(application, scheduler):
-    """Configura i job con intervalli più appropriati e garantisce l'esecuzione"""
-    logger.info("🔄 Configurazione job periodici")
-
+    """Configura i job periodici in modo sicuro"""
     try:
-        # Prima rimuovi eventuali job esistenti
+        # Verifica se lo scheduler è già in esecuzione
+        if scheduler.running:
+            logger.info("Scheduler già avviato, skip riconfigurazione")
+            return
+
+        logger.info("Configurazione job periodici (senza emoticon)")
+
+        # Rimuovi tutti i job esistenti
         scheduler.remove_all_jobs()
 
-        # Definisci gli intervalli per ogni categoria
-        # Le notizie verranno inviate a questi intervalli:
-        intervals = {
-            # Notizie generali - 4 volte al giorno (ogni 6 ore)
-            'generale': {'hours': 6, 'first_run': True},
-            
-            # Notizie tech - 2 volte al giorno (ogni 12 ore)
-            'tech': {'hours': 12, 'first_run': True},
-            
-            # Notizie gaming - 1 volta al giorno
-            'ps5': {'hours': 24, 'first_run': True},
-            'xbox': {'hours': 24, 'first_run': True},
-            'switch': {'hours': 24, 'first_run': True},
-            'pc': {'hours': 24, 'first_run': True},
+        # Configura i nuovi job
+        categories = {
+            'generale': timedelta(hours=6),
+            'tech': timedelta(hours=12),
+            'ps5': timedelta(days=1),
+            'xbox': timedelta(days=1),
+            'switch': timedelta(days=1),
+            'pc': timedelta(days=1)
         }
 
-        # Orari approssimativi di invio per categoria:
-        # generale: 00:00, 06:00, 12:00, 18:00
-        # tech: 00:00, 12:00
-        # gaming: una volta al giorno alle 12:00 (con offset di 30 secondi tra categorie)
-
-        # Aggiungi i job con offset per evitare sovraccarichi
-        offset = 0
-        for category, config in intervals.items():
-            try:
-                # Calcola il prossimo orario di esecuzione
-                next_run = datetime.now()
-                if config['first_run']:
-                    # Allinea l'orario al prossimo intervallo completo
-                    hours_until_next = config['hours'] - (next_run.hour % config['hours'])
-                    next_run = next_run.replace(minute=0, second=0, microsecond=0) + timedelta(hours=hours_until_next)
-                    # Aggiungi offset per evitare esecuzioni simultanee
-                    next_run += timedelta(seconds=offset)
-
-                job = scheduler.add_job(
-                    send_news_to_subscribers,
-                    'interval',
-                    hours=config['hours'],
-                    args=[application.bot, category, False],
-                    id=f'autosend_{category}',
-                    next_run_time=next_run,
-                    replace_existing=True,
-                    misfire_grace_time=3600
-                )
-                
-                # Log job configuration
-                logger.info(f"Job {job.id} configurato - Intervallo: {config['hours']} ore - Prossimo invio: {next_run}")
-
-                # Aggiungi un offset per distribuire i job
-                offset += 30  # 30 secondi di offset tra i job
-
-            except Exception as e:
-                logger.error(f"Errore configurazione job per {category}: {e}")
-
-        # Aggiungi job di reset cache (ogni 12 ore - 00:00 e 12:00)
-        try:
-            next_cache_reset = datetime.now().replace(minute=0, second=0, microsecond=0)
-            hours_until_next = 12 - (next_cache_reset.hour % 12)
-            next_cache_reset += timedelta(hours=hours_until_next)
-            
-            cache_job = scheduler.add_job(
-                reset_cache,
+        for category, interval in categories.items():
+            scheduler.add_job(
+                send_news_to_subscribers,
                 'interval',
-                hours=12,
-                id='reset_cache',
-                replace_existing=True,
-                next_run_time=next_cache_reset
-            )
-            logger.info(f"Job reset cache configurato - Prossima esecuzione: {next_cache_reset}")
-        except Exception as e:
-            logger.error(f"Errore configurazione job reset cache: {e}")
+                args=[application.bot, category],
+                hours=interval.total_seconds() // 3600,
+                id=f"autosend_{category}",
+                next_run_time=datetime.now() + timedelta(minutes=1))
+            logger.info(f"Job {category} configurato - Intervallo: {interval}")
 
-        # Aggiungi job di pulizia utenti inattivi (una volta al giorno alle 03:00)
-        try:
-            next_cleanup = datetime.now().replace(hour=3, minute=0, second=0, microsecond=0)
-            if next_cleanup < datetime.now():
-                next_cleanup += timedelta(days=1)
-                
-            cleanup_job = scheduler.add_job(
-                cleanup_inactive_users,
-                'interval',
-                hours=24,
-                args=[application.bot],
-                id='cleanup_inactive',
-                replace_existing=True,
-                next_run_time=next_cleanup
-            )
-            logger.info(f"Job pulizia utenti configurato - Prossima esecuzione: {next_cleanup}")
-        except Exception as e:
-            logger.error(f"Errore configurazione job pulizia: {e}")
-
-        # Configurazione scheduler
-        scheduler.configure(
-            {
-                'apscheduler.job_defaults.coalesce': True,
-                'apscheduler.job_defaults.max_instances': 1,
-                'apscheduler.timezone': 'UTC'
-            }
+        # Job per la pulizia
+        scheduler.add_job(
+            reset_news_cache,
+            'cron',
+            hour=0,
+            id="reset_cache"
         )
 
-        # Log riepilogo job configurati
-        jobs = scheduler.get_jobs()
-        logger.info(f"✅ {len(jobs)} job configurati correttamente")
-        for job in jobs:
-            try:
-                if hasattr(job, 'next_run_time') and job.next_run_time:
-                    logger.info(f"Job {job.id} - Prossima esecuzione: {job.next_run_time}")
-                else:
-                    logger.info(f"Job {job.id} - Prossima esecuzione: non definita")
-            except Exception as e:
-                logger.error(f"Errore logging job {job.id}: {e}")
+        scheduler.add_job(
+            cleanup_inactive_users,
+            'cron',
+            hour=3,
+            id="cleanup_users"
+        )
+
+    except SchedulerAlreadyRunningError:
+        logger.warning("Scheduler già in esecuzione, skip configurazione")
+    except Exception as e:
+        logger.error(f"Errore configurazione job: {e}", exc_info=True)
+
+
+async def reset_news_cache():
+    """Resetta la cache delle news a mezzanotte"""
+    try:
+        from utils.news_fetcher import news_fetcher
+
+        logger.info("🔄 Resetting news cache...")
+        news_fetcher.cache.clear()
+        news_fetcher.last_fetch.clear()
+        logger.info("✅ News cache reset completato")
 
     except Exception as e:
-        logger.error(f"Errore grave in setup_periodic_jobs: {e}", exc_info=True)
-        raise
+        logger.error(f"Errore nel reset della cache: {e}")
 
 
 async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):

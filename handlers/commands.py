@@ -16,152 +16,296 @@ db = Database()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gestisce il comando /start"""
+    """Versione robusta del comando start"""
     try:
         user = update.effective_user
+        if not user:
+            logger.warning("Start command without user")
+            return
+
+        logger.info(f"New user: {user.id} - @{user.username}")
         db.add_user(user.id, user.username, user.first_name, user.last_name)
 
         welcome_msg = (
-            "👋 Ciao! Sono un bot che ti tiene aggiornato sulle ultime notizie di videogiochi e tecnologia.\n\n"
-            "Ecco cosa puoi fare:\n"
-            "- Usa /news per le ultime notizie\n"
-            "- Usa /preferenze per impostare le tue preferenze\n"
-            "- Usa /help per vedere tutti i comandi disponibili"
+            "👋 *Benvenuto!* Sono il tuo bot per le notizie su gaming e tech.\n\n"
+            "🔹 Usa /news per le ultime notizie\n"
+            "🔹 /preferenze per personalizzare\n"
+            "🔹 /help per tutti i comandi\n\n"
+            "Scegli una categoria qui sotto per iniziare:"
         )
 
-        await update.message.reply_text(welcome_msg)
+        keyboard = [
+            [InlineKeyboardButton("🎮 Gaming", callback_data='news_cat_generale')],
+            [InlineKeyboardButton("💻 Tech", callback_data='news_cat_tech')],
+            [InlineKeyboardButton("⚙️ Preferenze", callback_data='pref_menu')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(welcome_msg,
+                                        parse_mode="Markdown",
+                                        reply_markup=reply_markup)
+
     except Exception as e:
-        logger.error(f"Error in start command: {e}")
-        await update.message.reply_text("Si è verificato un errore. Riprova più tardi.")
+        logger.error(f"Error in start: {e}", exc_info=True)
+        await error_handler(update, context)
 
 
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mostra i comandi disponibili"""
-    help_text = """
-📚 *Guida ai comandi disponibili*:
+    """Versione robusta del comando help"""
+    try:
+        help_text = """
+📚 *Comandi disponibili*:
 
 */start* - Avvia il bot
 */help* - Mostra questo messaggio
-*/news [categoria]* - Notizie dalla categoria specificata
-*/sommario [categoria]* - Mostra un sommario delle notizie
-*/dettaglio N* - Mostra il dettaglio della notizia N
-*/cerca <termine>* - Cerca notizie per parole chiave
-*/preferenze* - Imposta le tue preferenze
+*/news* - Menu notizie
+*/preferenze* - Imposta preferenze
 
-🎮 *Categorie videogiochi*:
-/ps5 - Notizie PlayStation 5
+🎮 *Gaming*:
+/ps5 - Notizie PlayStation
 /xbox - Notizie Xbox
-/switch - Notizie Nintendo Switch
+/switch - Notizie Nintendo
 /pc - Notizie PC Gaming
 
-💻 *Altre categorie*:
-/tech - Notizie tecnologia
-/ia - Notizie intelligenza artificiale
-/crypto - Notizie criptovalute
+💻 *Tech*:
+/tech - Tecnologia
+/ia - Intelligenza Artificiale
+/crypto - Criptovalute
 
-🔥 *Comandi Speciali*:
-/releases - Ultime uscite e prossimi giochi
-/deals - Offerte e sconti giochi
-/top - Top notizie del giorno
-/filter - Filtra notizie per piattaforma
-/digest - Riepilogo giornaliero
-/news5 - Ultime 5 notizie
-/news10 - Ultime 10 notizie
-
-⚙️ *Comandi Gruppo*:
-/group_start - Registra questo gruppo
-/group_settings - Impostazioni gruppo
-/subscribegroup - Iscrive il gruppo a tutte le categorie
-/getchatid - Ottieni l'ID della chat
+🔍 *Altro*:
+/cerca <testo> - Cerca notizie
+/sommario - Anteprima notizie
+/dettaglio N - Leggi una notizia
 """
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+        await update.message.reply_text(help_text, parse_mode="Markdown")
+        db.update_user_activity(update.effective_user.id)
+
+    except Exception as e:
+        logger.error(f"Error in help: {e}")
+        await update.message.reply_text("❌ Errore nel caricamento della guida")
 
 
 async def news(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mostra un menu per scegliere lingua, categoria e numero di notizie"""
+    """Versione robusta del menu news"""
     try:
         keyboard = [
-            [InlineKeyboardButton("\ud83c\uddee\ud83c\uddf9 Italiano", callback_data='news_lang_it'),
-             InlineKeyboardButton("\ud83c\uddec\ud83c\udde7 English", callback_data='news_lang_en'),
-             InlineKeyboardButton("\ud83c\udf0d Tutte", callback_data='news_lang_all')],
-            [InlineKeyboardButton("\ud83c\udfae Generale", callback_data='news_cat_generale'),
-             InlineKeyboardButton("\ud83d\udd79\ufe0f PS5", callback_data='news_cat_ps5'),
-             InlineKeyboardButton("\ud83d\udfe9 Xbox", callback_data='news_cat_xbox')],
-            [InlineKeyboardButton("\ud83d\udfe5 Switch", callback_data='news_cat_switch'),
-             InlineKeyboardButton("\ud83d\udcbb PC", callback_data='news_cat_pc'),
-             InlineKeyboardButton("\ud83d\udcf1 Tech", callback_data='news_cat_tech')],
-            [InlineKeyboardButton("\ud83e\udde0 IA", callback_data='news_cat_ia'),
-             InlineKeyboardButton("\u20bf Crypto", callback_data='news_cat_cripto')],
-            [InlineKeyboardButton("5 Notizie", callback_data='news_limit_5'),
-             InlineKeyboardButton("10 Notizie", callback_data='news_limit_10'),
-             InlineKeyboardButton("20 Notizie", callback_data='news_limit_20')],
+            [InlineKeyboardButton("🇮🇹 Italiano", callback_data='news_lang_it'),
+             InlineKeyboardButton("🇬🇧 English", callback_data='news_lang_en')],
+            [InlineKeyboardButton("🎮 Generale", callback_data='news_cat_generale'),
+             InlineKeyboardButton("🟦 PS5", callback_data='news_cat_ps5')],
+            [InlineKeyboardButton("🟩 Xbox", callback_data='news_cat_xbox'),
+             InlineKeyboardButton("🔴 Switch", callback_data='news_cat_switch')],
+            [InlineKeyboardButton("💻 PC", callback_data='news_cat_pc'),
+             InlineKeyboardButton("📱 Tech", callback_data='news_cat_tech')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
+
         await update.message.reply_text(
-            '📰 *Scegli lingua, categoria e numero di notizie da visualizzare*:',
+            '📰 *Scegli categoria e lingua*:',
             reply_markup=reply_markup,
-            parse_mode="MarkdownV2"
+            parse_mode="Markdown"
         )
+        db.update_user_activity(update.effective_user.id)
+
     except Exception as e:
-        logger.error(f"Error in news command: {e}")
-        await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
+        logger.error(f"Error in news menu: {e}")
+        await update.message.reply_text("❌ Errore nel menu notizie")
 
 
 # State for user news preferences (in-memory, for demo)
 USER_NEWS_PREFS = {}
 
 
-async def handle_news_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gestisce la selezione di lingua/categoria/limite per le news"""
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    chat_id = query.message.chat_id
-    data = query.data
-
-    # Get or set default user prefs
-    prefs = USER_NEWS_PREFS.get(user_id, {'lang': 'all', 'cat': 'generale', 'limit': 5})
-
-    if data.startswith('news_lang_'):
-        lang = data.split('_')[-1]
-        prefs['lang'] = lang
-    elif data.startswith('news_cat_'):
-        cat = data.split('_')[-1]
-        prefs['cat'] = cat
-    elif data.startswith('news_limit_'):
-        limit = int(data.split('_')[-1])
-        prefs['limit'] = limit
-
-    USER_NEWS_PREFS[user_id] = prefs
-
-    # Compose category for fetcher
-    if prefs['cat'] == 'generale':
-        if prefs['lang'] == 'it':
-            category = 'generale_it'
-        elif prefs['lang'] == 'en':
-            category = 'generale_en'
-        else:
-            category = 'generale'
-    else:
-        category = prefs['cat']
-
-    # Fetch news
+async def category_command(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str, display_name: str):
+    """Template generico per i comandi di categoria"""
     try:
-        news_list = await news_fetcher.get_news(category, limit=prefs['limit'])
-        if news_list:
-            msg = "\n\n".join([
-                f"*{i+1}\\. {escape_markdown(title, version=2)}*\n"
-                f"[{escape_markdown(source, version=2)}]({escape_markdown(link, version=2)}) \\| "
-                f"{escape_markdown(date, version=2)} \\| {escape_markdown(lang.upper(), version=2)}"
-                for i, (title, link, source, date, lang) in enumerate(news_list)
-            ])
-            await query.edit_message_text(msg, parse_mode="MarkdownV2", disable_web_page_preview=True)
-        else:
-            await query.edit_message_text("Nessuna notizia trovata per questa selezione.")
-    except Exception as e:
-        logger.error(f"Error in handle_news_buttons: {e}")
-        await query.edit_message_text("Errore nel recupero delle notizie o nella formattazione del messaggio.")
+        user = update.effective_user
+        if not user:
+            return
 
+        logger.info(f"{user.id} requested {category} news")
+        db.update_user_activity(user.id)
+
+        news_list = await news_fetcher.get_news(category)
+        if not news_list:
+            await update.message.reply_text(f"⚠️ Nessuna notizia trovata per {display_name}. Riprova più tardi.")
+            return
+
+        msg = f"📰 *Ultime notizie {display_name}*\n\n{format_news(news_list)}"
+        await update.message.reply_text(
+            msg,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+
+    except Exception as e:
+        logger.error(f"Error in {category} command: {e}")
+        await update.message.reply_text("❌ Errore nel recupero notizie")
+
+async def ps5(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await category_command(update, context, 'ps5', 'PlayStation 5')
+
+async def xbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await category_command(update, context, 'xbox', 'Xbox')
+
+async def switch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await category_command(update, context, 'switch', 'Nintendo Switch')
+
+async def pc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await category_command(update, context, 'pc', 'PC Gaming')
+
+async def tech(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await category_command(update, context, 'tech', 'Tecnologia')
+
+async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await category_command(update, context, 'ia', 'Intelligenza Artificiale')
+
+async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await category_command(update, context, 'cripto', 'Criptovalute')
+
+
+async def handle_news_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestione robusta dei pulsanti news"""
+    try:
+        query = update.callback_query
+        await query.answer()
+
+        if not query or not query.data or not query.from_user:
+            logger.error("Invalid callback query received")
+            return
+
+        data = query.data
+        user_id = query.from_user.id
+        chat_id = query.message.chat_id if query.message else None
+
+        logger.info(f"Button pressed - User: {user_id}, Chat: {chat_id}, Data: {data}")
+
+        # Get or set default user prefs
+        prefs = USER_NEWS_PREFS.get(user_id, {'lang': 'all', 'cat': 'generale', 'limit': 5})
+
+        if data.startswith('news_lang_'):
+            lang = data.split('_')[-1]
+            if lang in ['it', 'en', 'all']:
+                prefs['lang'] = lang
+        elif data.startswith('news_cat_'):
+            cat = data.split('_')[-1]
+            prefs['cat'] = cat
+        elif data.startswith('news_limit_'):
+            try:
+                limit = int(data.split('_')[-1])
+                prefs['limit'] = limit
+            except ValueError:
+                logger.warning(f"Invalid limit value in {data}")
+                prefs['limit'] = 5  # Default value
+
+        USER_NEWS_PREFS[user_id] = prefs
+
+        # Compose category for fetcher
+        if prefs['cat'] == 'generale':
+            if prefs['lang'] == 'it':
+                category = 'generale_it'
+            elif prefs['lang'] == 'en':
+                category = 'generale_en'
+            else:
+                category = 'generale'
+        else:
+            category = prefs['cat']
+
+        # Fetch news with error handling
+        try:
+            news_list = await news_fetcher.get_news(category, limit=prefs['limit'])
+            if not news_list:
+                await query.edit_message_text("⚠️ Nessuna notizia trovata. Riprova più tardi.")
+                return
+
+            msg = []
+            for i, (title, link, source, date, lang) in enumerate(news_list):
+                try:
+                    msg.append(
+                        f"*{i+1}\\. {escape_markdown(title, version=2)}*\n"
+                        f"[{escape_markdown(source, version=2)}]({escape_markdown(link, version=2)}) \\| "
+                        f"{escape_markdown(date, version=2)} \\| {escape_markdown(lang.upper(), version=2)}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error formatting entry {i}: {e}")
+                    continue
+
+            if not msg:
+                await query.edit_message_text("⚠️ Errore nel formattare le notizie.")
+                return
+
+            await query.edit_message_text(
+                "\n\n".join(msg),
+                parse_mode="MarkdownV2",
+                disable_web_page_preview=True
+            )
+
+        except Exception as e:
+            logger.error(f"News fetch error: {e}")
+            await query.edit_message_text("❌ Errore nel recupero delle notizie.")
+
+    except Exception as e:
+        logger.critical(f"Unhandled error in button handler: {e}", exc_info=True)
+        try:
+            await query.edit_message_text("⚠️ Si è verificato un errore. Riprova più tardi.")
+        except:
+            pass  # Se non possiamo inviare il messaggio, ignoriamo
+
+
+async def handle_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestisce la selezione delle preferenze"""
+    try:
+        query = update.callback_query
+        await query.answer()
+
+        choice = query.data
+        user_id = query.from_user.id
+
+        if choice == 'pref_games':
+            # Logica per preferenze giochi
+            await query.edit_message_text("Preferenza impostata: solo videogiochi 🎮")
+        elif choice == 'pref_tech':
+            # Logica per preferenze tech
+            await query.edit_message_text("Preferenza impostata: solo tech 💻")
+
+        db.update_user_activity(user_id)
+
+    except Exception as e:
+        logger.error(f"Error in handle_preferences: {e}")
+        await error_handler(update, context)
+
+
+async def handle_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestisce la frequenza di invio"""
+    try:
+        query = update.callback_query
+        await query.answer()
+
+        choice = query.data
+        user_id = query.from_user.id
+
+        # Ottieni le preferenze attuali
+        prefs = db.get_user_preferences(user_id) or {}
+
+        if choice == 'freq_high':
+            prefs['frequency'] = 'high'
+            response = "Frequenza impostata: aggiornamenti frequenti 🔔"
+        else:
+            prefs['frequency'] = 'low'
+            response = "Frequenza impostata: aggiornamenti ridotti 🔕"
+
+        # Salva le preferenze
+        with db.get_connection() as conn:
+            conn.execute(
+                "UPDATE users SET preferences = ? WHERE user_id = ?",
+                (json.dumps(prefs), user_id))
+
+            await query.edit_message_text(text=response)
+            db.update_user_activity(user_id)
+
+    except Exception as e:
+        logger.error(f"Error in handle_frequency: {e}")
+        await error_handler(update, context)
 
 async def preferenze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Menu per impostare le preferenze"""
@@ -182,49 +326,19 @@ async def preferenze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def handle_preferences(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gestisce la selezione delle preferenze"""
-    query = update.callback_query
-    await query.answer()
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestione centralizzata degli errori"""
+    error = str(context.error)
+    logger.error(f"Global error: {error}", exc_info=True)
 
-    choice = query.data
-    user_id = query.from_user.id
-
-    if choice == 'pref_games':
-        # Rimuovi tutte le categorie tranne quelle di gaming
-        current_categories = db.get_user_categories(user_id)
-        for cat in current_categories:
-            if cat not in ['ps5', 'xbox', 'switch', 'pc']:
-                db.unsubscribe(user_id, cat)
-
-        # Iscrivi alle categorie gaming se non già iscritto
-        for cat in ['ps5', 'xbox', 'switch', 'pc']:
-            if cat not in current_categories:
-                db.add_subscriber(user_id, cat, 'normal')
-
-        response = "Preferenza impostata: solo videogiochi 🎮"
-    elif choice == 'pref_tech':
-        # Rimuovi tutte le categorie tranne tech
-        current_categories = db.get_user_categories(user_id)
-        for cat in current_categories:
-            if cat not in ['tech', 'ia', 'crypto']:
-                db.unsubscribe(user_id, cat)
-
-        # Iscrivi alle categorie tech se non già iscritto
-        for cat in ['tech', 'ia', 'crypto']:
-            if cat not in current_categories:
-                db.add_subscriber(user_id, cat, 'normal')
-
-        response = "Preferenza impostata: solo tech 💻"
-    else:  # pref_both
-        # Iscrivi a tutte le categorie principali
-        for cat in ['generale', 'tech', 'ps5', 'xbox', 'switch', 'pc']:
-            db.add_subscriber(user_id, cat, 'normal')
-
-        response = "Preferenza impostata: videogiochi e tech 🎮+💻"
-
-    await query.edit_message_text(text=response)
-    db.update_user_activity(user_id)
+    try:
+        if update.message:
+            await update.message.reply_text(
+                "⚠️ Si è verificato un errore. Riprova più tardi.\n"
+                f"Errore: {error[:100]}..."
+            )
+    except:
+        pass  # Se non possiamo inviare il messaggio, ignoriamo
 
 
 async def handle_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -246,7 +360,7 @@ async def handle_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = "Frequenza impostata: aggiornamenti ridotti 🔕"
 
     # Salva le preferenze
-    with db._get_connection() as conn:
+    with db.get_connection() as conn:
         conn.execute(
             "UPDATE users SET preferences = ? WHERE user_id = ?",
             (json.dumps(prefs), user_id)
@@ -254,140 +368,6 @@ async def handle_frequency(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(text=response)
     db.update_user_activity(user_id)
-
-
-async def ps5(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Notizie PS5"""
-    try:
-        news_list = await news_fetcher.get_news('ps5')
-        if news_list:
-            msg = f"🎮 *Ultime notizie PS5*\n\n{format_news(news_list)}"
-            await update.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            db.update_user_activity(update.effective_user.id)
-        else:
-            await update.message.reply_text("Nessuna notizia trovata per PS5.")
-    except Exception as e:
-        logger.error(f"Error in ps5 command: {e}")
-        await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
-
-
-async def xbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Notizie Xbox"""
-    try:
-        news_list = await news_fetcher.get_news('xbox')
-        if news_list:
-            msg = f"🎮 *Ultime notizie Xbox*\n\n{format_news(news_list)}"
-            await update.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            db.update_user_activity(update.effective_user.id)
-        else:
-            await update.message.reply_text("Nessuna notizia trovata per Xbox.")
-    except Exception as e:
-        logger.error(f"Error in xbox command: {e}")
-        await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
-
-
-async def switch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Notizie Nintendo Switch"""
-    try:
-        news_list = await news_fetcher.get_news('switch')
-        if news_list:
-            msg = f"🎮 *Ultime notizie Nintendo Switch*\n\n{format_news(news_list)}"
-            await update.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            db.update_user_activity(update.effective_user.id)
-        else:
-            await update.message.reply_text("Nessuna notizia trovata per Nintendo Switch.")
-    except Exception as e:
-        logger.error(f"Error in switch command: {e}")
-        await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
-
-
-async def pc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Notizie PC Gaming"""
-    try:
-        news_list = await news_fetcher.get_news('pc')
-        if news_list:
-            msg = f"💻 *Ultime notizie PC Gaming*\n\n{format_news(news_list)}"
-            await update.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            db.update_user_activity(update.effective_user.id)
-        else:
-            await update.message.reply_text("Nessuna notizia trovata per PC Gaming.")
-    except Exception as e:
-        logger.error(f"Error in pc command: {e}")
-        await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
-
-
-async def tech(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Notizie tecnologia"""
-    try:
-        news_list = await news_fetcher.get_news('tech')
-        if news_list:
-            msg = f"💻 *Ultime notizie Tecnologia*\n\n{format_news(news_list)}"
-            await update.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            db.update_user_activity(update.effective_user.id)
-        else:
-            await update.message.reply_text("Nessuna notizia trovata per Tecnologia.")
-    except Exception as e:
-        logger.error(f"Error in tech command: {e}")
-        await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
-
-
-async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Notizie criptovalute"""
-    try:
-        news_list = await news_fetcher.get_news('cripto')
-        if news_list:
-            msg = f"💰 *Ultime notizie Criptovalute*\n\n{format_news(news_list)}"
-            await update.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            db.update_user_activity(update.effective_user.id)
-        else:
-            await update.message.reply_text("Nessuna notizia trovata per Criptovalute.")
-    except Exception as e:
-        logger.error(f"Error in crypto command: {e}")
-        await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
-
-
-async def ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Notizie intelligenza artificiale"""
-    try:
-        news_list = await news_fetcher.get_news('ia')
-        if news_list:
-            msg = f"🤖 *Ultime notizie Intelligenza Artificiale*\n\n{format_news(news_list)}"
-            await update.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            db.update_user_activity(update.effective_user.id)
-        else:
-            await update.message.reply_text("Nessuna notizia trovata per IA.")
-    except Exception as e:
-        logger.error(f"Error in ai command: {e}")
-        await update.message.reply_text("Si è verificato un errore nel recupero delle notizie.")
-
 
 async def news_5(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ultime 5 notizie"""
@@ -482,30 +462,32 @@ async def dettaglio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cerca notizie per parole chiave"""
-    if not context.args:
-        await update.message.reply_text("Usa: /cerca <termine di ricerca>")
-        return
-
+    """Versione robusta del comando cerca"""
     try:
+        if not context.args:
+            await update.message.reply_text("🔍 Usa: /cerca <termine>")
+            return
+
         search_term = ' '.join(context.args)
-        logger.info(f"Searching for: {search_term}")
+        logger.info(f"Search requested for: {search_term}")
 
         news_list = await news_fetcher.search_news(search_term)
 
-        if news_list:
-            msg = f"🔍 *Risultati per '{search_term}'*\n\n{format_news(news_list)}"
-            await update.message.reply_text(
-                msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-            db.update_user_activity(update.effective_user.id)
-        else:
-            await update.message.reply_text(f"Nessun risultato trovato per '{search_term}'")
+        if not news_list:
+            await update.message.reply_text(f"🔍 Nessun risultato per '{search_term}'")
+            return
+
+        msg = f"🔍 *Risultati per '{search_term}'*\n\n{format_news(news_list)}"
+        await update.message.reply_text(
+            msg,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+        db.update_user_activity(update.effective_user.id)
+
     except Exception as e:
-        logger.error(f"Error in search command: {e}")
-        await update.message.reply_text("Si è verificato un errore nella ricerca.")
+        logger.error(f"Search error: {e}")
+        await update.message.reply_text("❌ Errore nella ricerca")
 
 async def subscribe_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Versione semplificata e completamente robusta"""
@@ -667,7 +649,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # Ottieni statistiche dal database
-        with db._get_connection() as conn:
+        with db.get_connection() as conn:
             cursor = conn.cursor()
 
             # Totale utenti

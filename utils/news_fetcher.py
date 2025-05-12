@@ -98,6 +98,7 @@ class NewsFetcher:
         self.last_fetch = {}
         self.session = None
         self._initialized = False
+        self.lock = asyncio.Lock()  # Aggiungi un lock per thread safety
 
     async def initialize(self):
         """Initialize aiohttp session"""
@@ -174,101 +175,69 @@ class NewsFetcher:
             print(f"[ERROR] Failed to fetch {url}: {e}")
             return feedparser.FeedParserDict({'entries': []})
 
-    async def get_news(self, category: str = 'generale', limit: int = 5, keywords: Optional[List[str]] = None) -> List[
-        Tuple[str, str, str, str, str]]:
-        """Get news from multiple sources with optional keyword filtering. Returns (title, link, source, date, language)"""
-        print(f"[DEBUG] Getting news for category: {category}, limit: {limit}")
-
+    async def get_news(self, category: str = 'generale', limit: int = 5, keywords: Optional[List[str]] = None):
+        """Versione semplificata e più robusta"""
         try:
-            await self.ensure_initialized()
+            async with self.lock:  # Previene race conditions
+                await self.ensure_initialized()
 
-            # Support for new language-based categories
-            if category.lower() == 'generale':
-                urls = self.RSS_FEEDS.get('generale_it', []) + self.RSS_FEEDS.get('generale_en', [])
-            else:
-                urls = self.RSS_FEEDS.get(category.lower(), [])
+                # Normalizza la categoria
+                category = category.lower()
 
-            if not urls:
-                logger.warning(f"No URLs found for category: {category}")
-                print(f"[WARNING] No URLs found for category: {category}")
-                if category.lower() != 'generale':
-                    print(f"[INFO] Falling back to 'generale' category")
+                # Gestisci categorie speciali
+                if category == 'generale':
                     urls = self.RSS_FEEDS.get('generale_it', []) + self.RSS_FEEDS.get('generale_en', [])
-                if not urls:
-                    return []
-
-            tasks = [self.fetch_feed(url) for url in urls]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            all_entries = []
-            for i, (result, url) in enumerate(zip(results, urls)):
-                if isinstance(result, Exception):
-                    logger.error(f"Error processing feed {url}: {result}")
-                    print(f"[ERROR] Failed to process feed {url}: {result}")
-                    continue
-
-                domain = urlparse(url).netloc.replace('www.', '').split('.')[0].capitalize()
-                # Infer language from category or url
-                if url in self.RSS_FEEDS.get('generale_it', []):
-                    lang = 'it'
-                elif url in self.RSS_FEEDS.get('generale_en', []):
-                    lang = 'en'
                 else:
-                    lang = 'unknown'
+                    urls = self.RSS_FEEDS.get(category, [])
+                    if not urls:  # Fallback se categoria non trovata
+                        urls = self.RSS_FEEDS.get('generale_it', []) + self.RSS_FEEDS.get('generale_en', [])
 
-                entries = getattr(result, 'entries', [])
-                if not entries:
-                    print(f"[WARNING] No entries found in feed {url}")
-                    continue
+                # Fetch dei feed in parallelo
+                tasks = [self.fetch_feed(url) for url in urls]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                for entry in entries[:limit * 2]:
-                    try:
-                        title = getattr(entry, 'title', 'Titolo non disponibile')
-                        link = getattr(entry, 'link', '')
-                        if not link:
-                            continue
-                        published = None
-                        if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                            published = entry.published_parsed
-                        elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-                            published = entry.updated_parsed
-                        # Format date for display
-                        if published:
-                            date_str = datetime(*published[:6]).strftime('%Y-%m-%d %H:%M')
-                        else:
-                            date_str = 'N/A'
-                        if keywords and not any(kw.lower() in title.lower() for kw in keywords):
-                            continue
-                        all_entries.append((title, link, domain, date_str, lang))
-                    except Exception as e:
-                        logger.error(f"Error processing entry in {url}: {e}")
-                        print(f"[ERROR] Error processing entry: {e}")
+                # Processa i risultati
+                all_entries = []
+                for result, url in zip(results, urls):
+                    if isinstance(result, Exception):
                         continue
 
-            # Sort by date if available
-            def sort_key(x):
-                try:
-                    return datetime.strptime(x[3], '%Y-%m-%d %H:%M')
-                except Exception:
-                    return datetime.min
-            all_entries.sort(key=sort_key, reverse=True)
+                    domain = urlparse(url).netloc.replace('www.', '').split('.')[0].capitalize()
+                    lang = 'it' if url in self.RSS_FEEDS.get('generale_it', []) else 'en'
 
-            # Remove duplicates
-            unique_entries = []
-            seen = set()
-            for entry in all_entries:
-                if entry[1] not in seen:
-                    seen.add(entry[1])
-                    unique_entries.append(entry)
-                    if len(unique_entries) >= limit:
-                        break
+                    for entry in getattr(result, 'entries', [])[:limit * 2]:
+                        try:
+                            title = getattr(entry, 'title', 'No title')
+                            link = getattr(entry, 'link', '')
+                            if not link:
+                                continue
 
-            print(f"[DEBUG] Returning {len(unique_entries)} news items (with language and date)")
-            return unique_entries
+                            # Gestione data
+                            date_str = 'N/A'
+                            if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                                date_str = datetime(*entry.published_parsed[:6]).strftime('%Y-%m-%d %H:%M')
+
+                            all_entries.append((title, link, domain, date_str, lang))
+                        except Exception:
+                            continue
+
+                # Ordina per data (più recente prima)
+                all_entries.sort(key=lambda x: x[3], reverse=True)
+
+                # Rimuovi duplicati e limita
+                seen = set()
+                unique_entries = []
+                for entry in all_entries:
+                    if entry[1] not in seen:
+                        seen.add(entry[1])
+                        unique_entries.append(entry)
+                        if len(unique_entries) >= limit:
+                            break
+
+                return unique_entries
 
         except Exception as e:
-            logger.error(f"Error in get_news for {category}: {e}", exc_info=True)
-            print(f"[ERROR] Failed to get news for {category}: {e}")
+            logger.error(f"Error in get_news: {e}")
             return []
 
     async def search_news(self, search_term: str, limit: int = 5) -> List[Tuple[str, str, str]]:

@@ -14,7 +14,7 @@ class Database:
         self.db_path = db_path
         self._initialize_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    def get_connection(self) -> sqlite3.Connection:
         """Restituisce una connessione configurata correttamente"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = lambda cursor, row: {
@@ -25,7 +25,7 @@ class Database:
     def _initialize_db(self) -> None:
         """Crea le tabelle del database se non esistono"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("PRAGMA foreign_keys = ON")
 
@@ -96,7 +96,7 @@ class Database:
                  first_name: Optional[str] = None, last_name: Optional[str] = None) -> bool:
         """Aggiunge un nuovo utente al database"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT OR IGNORE INTO users (user_id, username, first_name, last_name, joined_date, last_activity) "
@@ -121,7 +121,7 @@ class Database:
     def update_user_activity(self, user_id: int) -> bool:
         """Aggiorna la data dell'ultima attività dell'utente"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE users SET last_activity = ?, marked_for_removal = 0 WHERE user_id = ?",
@@ -135,7 +135,7 @@ class Database:
     def add_subscriber(self, chat_id: int, category: str, frequency: str = 'normal') -> bool:
         """Aggiunge un iscritto al database (funziona per utenti e gruppi)"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 # Crea l'utente/gruppo se non esiste
                 self.add_user(chat_id)
 
@@ -165,7 +165,7 @@ class Database:
     def get_user_preferences(self, user_id: int) -> Dict[str, Any]:
         """Restituisce le preferenze di un utente"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT preferences FROM users WHERE user_id = ?",
@@ -182,7 +182,7 @@ class Database:
     def get_subscribers(self, category: str) -> Dict[int, Dict]:
         """Restituisce tutti gli iscritti a una categoria con le loro preferenze"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT u.user_id, u.preferences 
@@ -199,13 +199,13 @@ class Database:
             self.logger.error(f"Error getting subscribers for {category}: {e}")
             return {}
 
-    # ... (altri metodi rimangono identici ma con _get_connection invece di get_connection)
-    # Assicurati di sostituire tutte le occorrenze di get_connection con _get_connection
+    # ... (altri metodi rimangono identici ma con get_connection invece di get_connection)
+    # Assicurati di sostituire tutte le occorrenze di get_connection con get_connection
 
     def cleanup_database(self):
         """Pulisce il database da record inconsistenti"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 # Fix preferences vuote/nulle
                 conn.execute("UPDATE users SET preferences = '{}' WHERE preferences IS NULL OR preferences = ''")
                 # Rimuovi subscription senza user
@@ -220,7 +220,7 @@ class Database:
         if categories is None:
             categories = ['generale']
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO groups (group_id, title, added_date, categories) "
                     "VALUES (?, ?, ?, ?)",
@@ -233,7 +233,7 @@ class Database:
     def get_active_groups(self, category: str = None) -> Dict[int, Dict]:
         """Restituisce tutti i gruppi attivi, eventualmente filtrati per categoria"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 query = "SELECT group_id, title, categories FROM groups WHERE is_active = 1"
                 params = ()
 
@@ -256,7 +256,7 @@ class Database:
     def update_group_categories(self, group_id: int, categories: List[str]) -> bool:
         """Aggiorna le categorie di un gruppo"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 conn.execute(
                     "UPDATE groups SET categories = ? WHERE group_id = ?",
                     (json.dumps(categories), group_id)
@@ -269,7 +269,7 @@ class Database:
     def unsubscribe(self, user_id: int, category: str) -> bool:
         """Disiscrive un utente/gruppo da una categoria"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "DELETE FROM subscriptions WHERE user_id = ? AND category = ?",
@@ -283,7 +283,7 @@ class Database:
     def increment_news_sent(self, user_id: int) -> bool:
         """Incrementa il contatore di notizie inviate"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE user_stats SET news_received = news_received + 1 "
@@ -298,7 +298,7 @@ class Database:
     def log_news_sent(self, category: str, sent_count: int) -> bool:
         """Registra l'invio di notizie nelle statistiche"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT COUNT(*) as count FROM subscriptions WHERE category = ?",
@@ -319,7 +319,7 @@ class Database:
     def get_inactive_users(self, days: int = 60) -> List[int]:
         """Restituisce gli utenti inattivi"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
                 cursor.execute(
@@ -335,7 +335,7 @@ class Database:
     def mark_for_removal(self, user_id: int) -> bool:
         """Segna un utente per la rimozione"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE users SET marked_for_removal = 1 WHERE user_id = ?",
@@ -349,7 +349,7 @@ class Database:
     def remove_user(self, user_id: int) -> bool:
         """Rimuove completamente un utente"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM subscriptions WHERE user_id = ?", (user_id,))
                 cursor.execute("DELETE FROM user_stats WHERE user_id = ?", (user_id,))
@@ -363,7 +363,7 @@ class Database:
     def get_user_categories(self, user_id: int) -> List[str]:
         """Restituisce le categorie a cui è iscritto un utente"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT category FROM subscriptions WHERE user_id = ?",
@@ -377,7 +377,7 @@ class Database:
     def get_subscriber_counts(self) -> Dict[str, int]:
         """Restituisce il conteggio degli iscritti per ogni categoria"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
 
                 # Ottieni tutte le categorie distinte
@@ -402,7 +402,7 @@ class Database:
     def get_total_subscribers(self) -> int:
         """Restituisce il numero totale di iscritti unici"""
         try:
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(DISTINCT user_id) as count FROM subscriptions")
                 return cursor.fetchone()['count']
@@ -415,7 +415,7 @@ class Database:
         try:
             cutoff_date = (datetime.now() - timedelta(days=30)).isoformat()
 
-            with self._get_connection() as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT s.category, COUNT(DISTINCT s.user_id) as count 

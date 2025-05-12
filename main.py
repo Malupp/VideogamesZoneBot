@@ -8,18 +8,23 @@ from handlers import commands, auto_send, errors
 import asyncio
 import logging
 import os
+import sys
+import io
 from datetime import datetime
 from utils.news_fetcher import news_fetcher
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import db
+
+# Configura sys.stdout per supportare Unicode
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=getattr(logging, Config.LOG_LEVEL),
     handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('bot.log')
+        logging.StreamHandler(stream=sys.stdout),  # Usa stdout configurato
+        logging.FileHandler('bot.log', encoding='utf-8')  # File con encoding UTF-8
     ]
 )
 logger = logging.getLogger(__name__)
@@ -30,6 +35,7 @@ app = FastAPI()
 
 class TelegramBot:
     def __init__(self):
+        self.post_init = None
         self.logger = logger.getChild('telegram_bot')
         self.application = None
         self.scheduler = None  # Inizializzato qui ma configurato dopo
@@ -37,63 +43,44 @@ class TelegramBot:
         self.initialization_complete = False
 
     async def initialize(self):
-        """Inizializza il bot senza avviarlo"""
+        """Versione corretta del metodo initialize"""
         if self.initialization_complete:
             return
 
-        self.logger.info("Inizializzazione bot in corso...")
+        retries = 3
+        for attempt in range(retries):
+            try:
+                # 1. Inizializza news_fetcher
+                await news_fetcher.initialize()
 
-        try:
-            # 1. Prima inizializza l'applicazione
-            self.application = (
-                ApplicationBuilder()
-                .token(TOKEN)
-                .build()
-            )
+                # 2. Crea l'applicazione Telegram
+                self.application = (
+                    ApplicationBuilder()
+                    .token(TOKEN)
+                    .post_init(self.post_init)  # Ora il metodo esiste
+                    .build()
+                )
 
-            # 2. Configura lo scheduler con event loop corrente
-            self.scheduler = AsyncIOScheduler(
-                timezone="UTC",
-                job_defaults={
-                    'misfire_grace_time': 3600,
-                    'coalesce': True,
-                    'max_instances': 1
-                }
-            )
-            self.scheduler.configure(event_loop=asyncio.get_event_loop())
-
-            # 3. Assegna lo scheduler all'applicazione
-            self.application.scheduler = self.scheduler
-
-            # Registra gli handler
-            self._register_handlers()
-
-            # Inizializza news fetcher
-            await news_fetcher.initialize()
-
-            # Inizializza l'applicazione
-            await self.application.initialize()
-
-            # Configura lo scheduler
-            auto_send.setup_periodic_jobs(self.application, self.scheduler)
-
-            # Avvia lo scheduler
-            if not self.scheduler.running:
+                # 3. Configura scheduler
+                self.scheduler = AsyncIOScheduler(timezone="UTC")
                 self.scheduler.start()
-                self.logger.info(f"🚀 Scheduler avviato con {len(self.scheduler.get_jobs())} job attivi")
-                # Log dei job configurati
-                for job in self.scheduler.get_jobs():
-                    self.logger.info(f"Job {job.id} - Prossima esecuzione: {job.next_run_time}")
+                self.application.scheduler = self.scheduler
 
-            self.initialization_complete = True
-            self.logger.info("Inizializzazione bot completata")
+                # 4. Registra handlers
+                self._register_handlers()
 
+                # 5. Configura job periodici
+                auto_send.setup_periodic_jobs(self.application, self.scheduler)
 
-        except Exception as e:
-            self.logger.critical(f"Errore inizializzazione bot: {e}", exc_info=True)
-            # Riavvia dopo un delay
-            await asyncio.sleep(5)
-            await self.initialize()
+                self.initialization_complete = True
+                logger.info("✅ Bot inizializzato correttamente")
+                return
+
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1} failed: {e}")
+                if attempt == retries - 1:
+                    raise
+                await asyncio.sleep(5)
 
     def _register_handlers(self):
         """Registra tutti gli handler dei comandi"""
@@ -197,18 +184,44 @@ class TelegramBot:
 # Inizializza il bot come variabile globale
 bot_app = TelegramBot()
 
+# Sostituisci TUTTA la parte finale di main.py a partire dalla creazione dell'app FastAPI
 
-@app.on_event("startup")
-async def startup_event():
-    """Evento di avvio di FastAPI"""
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Gestisce gli eventi di startup e shutdown dell'applicazione"""
+    # Parte di startup
+    logger.info("Starting up...")
     global bot_app
+
     try:
         await bot_app.initialize()
-        logger.info("Server FastAPI avviato e bot inizializzato")
+        logger.info("Bot initialized successfully")
+
+        # Avvia il task di monitoraggio dello scheduler
         asyncio.create_task(scheduler_monitor())
+
+        yield  # L'applicazione è ora in esecuzione
+
     except Exception as e:
-        logger.critical(f"Errore durante l'avvio: {e}")
+        logger.critical(f"Startup failed: {e}")
         raise
+
+    finally:
+        # Parte di shutdown
+        logger.info("Shutting down...")
+        try:
+            if bot_app:
+                await bot_app.shutdown()
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+
+
+# Crea l'app FastAPI con il gestore di lifespan
+app = FastAPI(lifespan=lifespan)
 
 
 async def scheduler_monitor():
@@ -218,7 +231,6 @@ async def scheduler_monitor():
         await asyncio.sleep(300)  # Controlla ogni 5 minuti
 
 
-@app.on_event("shutdown")
 async def shutdown_event():
     global bot_app
     if bot_app:
@@ -228,27 +240,30 @@ async def shutdown_event():
         except asyncio.TimeoutError:
             logger.error("Timeout durante lo shutdown")
 
+
 @app.post("/webhook")
 async def webhook(request: Request):
     """Gestisce gli aggiornamenti webhook di Telegram"""
     global bot_app
-
     try:
-        # Assicurati che il bot sia inizializzato
         if not bot_app.initialization_complete:
-            await bot_app.initialize()
+            return JSONResponse(
+                content={"status": "error", "message": "Bot not initialized"},
+                status_code=503
+            )
 
-        # Leggi l'aggiornamento JSON
         update_data = await request.json()
-
-        # Processa l'aggiornamento
         update = Update.de_json(update_data, bot_app.application.bot)
         await bot_app.application.process_update(update)
 
-        return JSONResponse(content={"status": "ok"})
+        return {"status": "ok"}
+
     except Exception as e:
-        logger.error(f"Errore nel webhook: {e}", exc_info=True)
-        return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
+        logger.error(f"Webhook error: {e}", exc_info=True)
+        return JSONResponse(
+            content={"status": "error", "message": str(e)},
+            status_code=500
+        )
 
 
 @app.get("/")
@@ -256,15 +271,18 @@ async def health_check():
     """Endpoint per verificare lo stato del bot"""
     global bot_app
 
-    scheduler_status = "running" if bot_app and bot_app.scheduler and bot_app.scheduler.running else "not running"
-    jobs = len(bot_app.scheduler.get_jobs()) if bot_app and bot_app.scheduler else 0
-
-    return {
-        "status": "ok",
-        "scheduler": scheduler_status,
-        "active_jobs": jobs,
-        "bot_initialized": bot_app.initialization_complete if bot_app else False
+    status = {
+        "status": "ok" if bot_app.initialization_complete else "initializing",
+        "timestamp": datetime.now().isoformat()
     }
+
+    if bot_app.scheduler:
+        status.update({
+            "scheduler": "running" if bot_app.scheduler.running else "stopped",
+            "active_jobs": len(bot_app.scheduler.get_jobs())
+        })
+
+    return status
 
 @app.get("/status")
 async def status(self):
@@ -317,9 +335,25 @@ async def force_jobs():
 
 def run():
     """Punto di ingresso per l'avvio da riga di comando"""
-    port = int(os.getenv("PORT", 10000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
+    # Configura Uvicorn con logging
+    config = uvicorn.Config(
+        "main:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 10000)),
+        log_level="info",
+        server_header=False,
+        timeout_keep_alive=60
+    )
 
+    server = uvicorn.Server(config)
+
+    try:
+        # Avvia il server con gestione degli errori
+        asyncio.run(server.serve())
+    except Exception as e:
+        logger.critical(f"Server failed: {e}")
+    finally:
+        logger.info("Server stopped")
 
 def check_config():
     required = ['TOKEN', 'ADMIN_IDS']
